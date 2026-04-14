@@ -1,1 +1,0 @@
-# lampa-skip-intro
