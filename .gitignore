@@ -1,0 +1,19 @@
+.DS_Store
+.idea/
+node_modules/
+package-lock.json
+
+# Local Lampa source used for plugin testing (see skill: lampa-plugin-browser-testing).
+# Vendored locally so `npm run start` is one directory away — NOT committed.
+lampa-source/
+
+# Artifacts from Playwright MCP test runs
+.playwright-mcp/
+
+# Claude Code local tooling (personal)
+.claude/
+
+# Customer contract / ТЗ — confidential, kept locally only
+kino_pub/*.docx
+kino_pub/~$*.docx
+
