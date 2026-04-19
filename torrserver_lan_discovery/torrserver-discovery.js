@@ -423,9 +423,8 @@
                 try { state.onRetry(); } catch (e) { log('onRetry error:', e && e.message); }
             }
 
-            $list.on('hover:enter', '.torrserver-lan-item', function () { doPick($(this)); });
-            $cancel.on('hover:enter', function () { doAbort(); });
-            $retry.on('hover:enter', function () { doRetry(); });
+            $cancel.on('hover:enter', function () { doAbort(); }).on('click', function () { doAbort(); });
+            $retry.on('hover:enter', function () { doRetry(); }).on('click', function () { doRetry(); });
 
             Lampa.Modal.open({
                 title: T('torrserver_lan_modal_title'),
@@ -436,18 +435,18 @@
             });
 
             // Override Lampa's built-in 'modal' controller AFTER Modal.open — Modal.open
-            // internally calls Controller.add('modal', ...) with a default handler; our
-            // override adds proper collection focus on the results list.
-            // Pattern: see interaction/torserver.js error() which does the same thing
-            // after Modal.update(temp).
+            // internally calls Controller.add('modal', ...) with a default handler that
+            // just closes on any key. We replace it so Enter on a focused .selector item
+            // dispatches hover:enter (and reaches our per-item listener).
+            // Pattern: see interaction/torserver.js error().
             Lampa.Controller.add('modal', {
                 invisible: true,
                 toggle: function () {
                     try {
                         Lampa.Controller.collectionSet($root);
-                        var $focus = $list.find('.torrserver-lan-item:first');
-                        if (!$focus.length) $focus = $cancel;
-                        Lampa.Controller.collectionFocus($focus[0], $root);
+                        // Pass `false` — Lampa auto-focuses the first `.selector` in the
+                        // collection (the same call as interaction/torserver.js).
+                        Lampa.Controller.collectionFocus(false, $root);
                     } catch (e) { /* noop */ }
                 },
                 update: function () {
@@ -473,20 +472,24 @@
             if (entry.auth) {
                 $item.append($('<span class="torrserver-lan-item-auth"></span>').text('🔒 ' + T('torrserver_lan_auth_required')));
             }
-            // Per-item listener (not delegation) — Lampa's Controller triggers hover:enter
-            // directly on the focused element; delegation on the parent works for jQuery
-            // triggered events, but relying on the bubbling path is fragile across builds.
-            $item.on('hover:enter', function () {
+            // Per-item listener (not delegation) + click for mouse users.
+            function pick() {
+                log('result picked:', url);
                 try { state.onPick && state.onPick(url); } catch (e) { log('onPick error:', e && e.message); }
                 ResultsModal.close();
-            });
+            }
+            $item.on('hover:enter', pick).on('click', pick);
             state.$list.append($item);
 
+            // Re-seed the Controller collection so Lampa's focus navigation (up/down)
+            // sees the new item and can move focus onto it.
             if (state.count === 1) {
                 try {
                     Lampa.Controller.collectionSet(state.$root);
                     Lampa.Controller.collectionFocus($item[0], state.$root);
                 } catch (e) { /* noop */ }
+            } else {
+                try { Lampa.Controller.collectionSet(state.$root); } catch (e) { /* noop */ }
             }
         },
 
