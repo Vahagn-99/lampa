@@ -54,7 +54,8 @@
             torrserver_lan_mixed_content_warning: {
                 ru: 'Сканирование из браузера по HTTPS может не работать из-за ограничений mixed-content. В нативном приложении Lampa ограничение отсутствует.',
                 en: 'Scanning from HTTPS browser may fail due to mixed-content restrictions. Native Lampa app is not affected.'
-            }
+            },
+            torrserver_lan_saved_noty: { ru: 'TorrServer сохранён: ', en: 'TorrServer saved: ' }
         });
     }
 
@@ -72,14 +73,15 @@
             '.torrserver-lan-status { padding: 0.8em 0; color: rgba(255,255,255,0.7); font-size: 0.9em; }' +
             '.torrserver-lan-warning { padding: 0.8em 1em; margin-bottom: 0.8em; background: rgba(255,180,0,0.15); border-left: 3px solid #ffb400; color: #fff; font-size: 0.85em; border-radius: 4px; }' +
             '.torrserver-lan-list { margin: 0.5em 0; max-height: 50vh; overflow-y: auto; }' +
-            '.torrserver-lan-item { padding: 0.9em 1em; margin: 0.3em 0; background: rgba(255,255,255,0.06); border-radius: 0.4em; cursor: pointer; display: flex; align-items: center; justify-content: space-between; outline: none; }' +
-            '.torrserver-lan-item.focus, .torrserver-lan-item:hover { background: rgba(255,255,255,0.18); }' +
+            '.torrserver-lan-item { padding: 0.9em 1em; margin: 0.3em 0; background: rgba(255,255,255,0.06); border: 2px solid transparent; border-radius: 0.5em; cursor: pointer; display: flex; align-items: center; justify-content: space-between; outline: none; transition: background 0.1s, border-color 0.1s; }' +
+            '.torrserver-lan-item.focus, .torrserver-lan-item.hover, .torrserver-lan-item:hover { background: #ffb400; border-color: #ffb400; color: #000; }' +
+            '.torrserver-lan-item.focus .torrserver-lan-item-url, .torrserver-lan-item.hover .torrserver-lan-item-url, .torrserver-lan-item:hover .torrserver-lan-item-url { color: #000; }' +
             '.torrserver-lan-item-url { font-family: monospace; font-size: 1em; color: #fff; }' +
             '.torrserver-lan-item-auth { font-size: 0.8em; color: #ffb400; margin-left: 1em; }' +
             '.torrserver-lan-empty { padding: 2em 1em; text-align: center; color: rgba(255,255,255,0.7); }' +
             '.torrserver-lan-footer { margin-top: 1em; display: flex; gap: 0.5em; }' +
-            '.torrserver-lan-btn { flex: 1; padding: 0.8em; text-align: center; background: rgba(255,255,255,0.08); border-radius: 0.4em; cursor: pointer; outline: none; color: #fff; }' +
-            '.torrserver-lan-btn.focus, .torrserver-lan-btn:hover { background: rgba(255,255,255,0.2); }' +
+            '.torrserver-lan-btn { flex: 1; padding: 0.8em; text-align: center; background: rgba(255,255,255,0.08); border: 2px solid transparent; border-radius: 0.5em; cursor: pointer; outline: none; color: #fff; transition: background 0.1s, border-color 0.1s; }' +
+            '.torrserver-lan-btn.focus, .torrserver-lan-btn.hover, .torrserver-lan-btn:hover { background: #ffb400; border-color: #ffb400; color: #000; }' +
             '.torrserver-lan-spinner { display: inline-block; width: 0.9em; height: 0.9em; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: torrserver-lan-spin 0.9s linear infinite; margin-right: 0.5em; vertical-align: middle; }' +
             '@keyframes torrserver-lan-spin { to { transform: rotate(360deg); } }';
         var s = document.createElement('style');
@@ -333,6 +335,22 @@
                 Lampa.Storage.set(slot, url);
                 Lampa.Storage.set('torrserver_lan_last_found', url);
                 log('saved to', slot, url);
+                // Patch the already-rendered value in Settings → Сервер (if open) so
+                // the user doesn't have to back out and re-enter to see the change.
+                try {
+                    var $row = $('[data-name="' + slot + '"]');
+                    if ($row.length) {
+                        $row.find('.settings-param__value').text(url);
+                        // Bump the status indicator to "wait"; Lampa's own Storage.listener
+                        // on 'change' will then re-check and flip it to active/error.
+                        $row.find('.settings-param__status').removeClass('active error').addClass('wait');
+                    }
+                } catch (e) { /* noop */ }
+                // Tell the user the save happened — the modal is closing right after and
+                // there's nothing else on-screen to confirm it.
+                try {
+                    Lampa.Noty.show(T('torrserver_lan_saved_noty') + url, { time: 3000 });
+                } catch (e) { /* noop */ }
             } catch (e) {
                 log('save failed:', e && e.message);
             }
