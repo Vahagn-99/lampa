@@ -10,6 +10,7 @@
 |---|---|---|
 | **KinoPub × AppleTV Bridge** | При клике на серию в списке эпизодов от `appleTV.js` открывает Z01 Online с KinoPub как источником по умолчанию. Требует `appleTV.js` и `z01.online/online.js` (Z01 Premium). | `https://vahagn-99.github.io/lampa/plugins/kinopub-bridge.js` |
 | **Auto Skip** | Автоматический пропуск заставок, рекапов, титров и превью в сериалах. Источники сегментов: TheIntroDB, IntroDB. | `https://vahagn-99.github.io/lampa/plugins/autoskip.js` |
+| **TorrServer LAN Discovery** | Сканирует локальную сеть и находит TorrServer без ручного ввода IP/порта. Кнопка в настройках сервера + 4-секундное уведомление «OK — искать в сети» при неудачном подключении. | `https://vahagn-99.github.io/lampa/plugins/torrserver-discovery.js` |
 
 Удобная страничка со всеми URL: <https://vahagn-99.github.io/lampa/>
 

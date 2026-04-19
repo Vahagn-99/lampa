@@ -13,9 +13,5 @@ lampa-source/
 # Claude Code local tooling (personal)
 .claude/
 CLAUDE.md
-
-# Source trees and in-progress work — live on disk for dev, not published
-kino_pub/
-series_auto_skip/
 openspec/
 
