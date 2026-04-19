@@ -55,7 +55,9 @@
                 ru: 'Сканирование из браузера по HTTPS может не работать из-за ограничений mixed-content. В нативном приложении Lampa ограничение отсутствует.',
                 en: 'Scanning from HTTPS browser may fail due to mixed-content restrictions. Native Lampa app is not affected.'
             },
-            torrserver_lan_saved_noty: { ru: 'TorrServer сохранён: ', en: 'TorrServer saved: ' }
+            torrserver_lan_saved_noty: { ru: 'TorrServer сохранён: ', en: 'TorrServer saved: ' },
+            torrserver_lan_saved_slot_one: { ru: '(Сервер 1)', en: '(Server 1)' },
+            torrserver_lan_saved_slot_two: { ru: '(Сервер 2)', en: '(Server 2)' }
         });
     }
 
@@ -331,10 +333,14 @@
         save: function (url) {
             if (!url) return;
             try {
-                var slot = Util.activeSlotKey();
+                var useLink = Lampa.Storage.field('torrserver_use_link');
+                var slot = Util.activeSlotKey(); // honours torrserver_use_link (one/two)
+                var slotLabel = slot === 'torrserver_url_two'
+                    ? T('torrserver_lan_saved_slot_two')
+                    : T('torrserver_lan_saved_slot_one');
                 Lampa.Storage.set(slot, url);
                 Lampa.Storage.set('torrserver_lan_last_found', url);
-                log('saved to', slot, url);
+                log('saved to', slot, '(use_link=' + useLink + ')', url);
                 // Patch the already-rendered value in Settings → Сервер (if open) so
                 // the user doesn't have to back out and re-enter to see the change.
                 try {
@@ -346,10 +352,10 @@
                         $row.find('.settings-param__status').removeClass('active error').addClass('wait');
                     }
                 } catch (e) { /* noop */ }
-                // Tell the user the save happened — the modal is closing right after and
-                // there's nothing else on-screen to confirm it.
+                // Tell the user the save happened AND which slot was written, so the
+                // slot-routing (based on torrserver_use_link) is visible in the UI.
                 try {
-                    Lampa.Noty.show(T('torrserver_lan_saved_noty') + url, { time: 3000 });
+                    Lampa.Noty.show(T('torrserver_lan_saved_noty') + url + ' ' + slotLabel, { time: 3500 });
                 } catch (e) { /* noop */ }
             } catch (e) {
                 log('save failed:', e && e.message);
@@ -928,6 +934,28 @@
                 catch (e) { /* noop */ }
             }
         });
+
+        // Reposition the scan button each time the server settings panel opens.
+        // addParam puts the button at the end of the component; the user wants it
+        // above the torrserver_url input (right under the QR block), so we move it.
+        if (Lampa.Settings && Lampa.Settings.listener) {
+            Lampa.Settings.listener.follow('open', function (e) {
+                if (!e || e.name !== 'server') return;
+                try {
+                    var $body = e.body || $('.settings-param__body');
+                    var $btn = $body.find('[data-name="torrserver_lan_scan_btn"]');
+                    // Preferred anchor: place the button right above the "Ссылки"
+                    // section title so it sits between the QR/use-link area and the
+                    // Сервер-1/Сервер-2 inputs. Fall back to the first URL input.
+                    var $title = $body.find('.settings-param-title').eq(0);
+                    var $firstUrl = $body.find('[data-name="torrserver_url"]');
+                    var $anchor = $title.length ? $title : $firstUrl;
+                    if ($btn.length && $anchor.length && !$btn.prev().is($anchor)) {
+                        $btn.insertBefore($anchor);
+                    }
+                } catch (err) { /* noop */ }
+            });
+        }
     }
 
     /* ---------------------------------------------------------------------
