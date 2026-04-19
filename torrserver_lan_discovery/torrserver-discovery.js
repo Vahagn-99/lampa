@@ -427,18 +427,6 @@
             $cancel.on('hover:enter', function () { doAbort(); });
             $retry.on('hover:enter', function () { doRetry(); });
 
-            Lampa.Controller.add('torrserver_lan_modal', {
-                invisible: true,
-                toggle: function () {
-                    Lampa.Controller.collectionSet($root);
-                    var $focus = $list.find('.torrserver-lan-item:first');
-                    if (!$focus.length) $focus = $cancel;
-                    Lampa.Controller.collectionFocus($focus[0], $root);
-                },
-                update: function () {},
-                back: doAbort
-            });
-
             Lampa.Modal.open({
                 title: T('torrserver_lan_modal_title'),
                 html: $root,
@@ -447,7 +435,27 @@
                 onBack: doAbort
             });
 
-            Lampa.Controller.toggle('torrserver_lan_modal');
+            // Override Lampa's built-in 'modal' controller AFTER Modal.open — Modal.open
+            // internally calls Controller.add('modal', ...) with a default handler; our
+            // override adds proper collection focus on the results list.
+            // Pattern: see interaction/torserver.js error() which does the same thing
+            // after Modal.update(temp).
+            Lampa.Controller.add('modal', {
+                invisible: true,
+                toggle: function () {
+                    try {
+                        Lampa.Controller.collectionSet($root);
+                        var $focus = $list.find('.torrserver-lan-item:first');
+                        if (!$focus.length) $focus = $cancel;
+                        Lampa.Controller.collectionFocus($focus[0], $root);
+                    } catch (e) { /* noop */ }
+                },
+                update: function () {
+                    try { Lampa.Controller.collectionSet($root); } catch (e) { /* noop */ }
+                },
+                back: doAbort
+            });
+            try { Lampa.Controller.toggle('modal'); } catch (e) { /* noop */ }
 
             return state;
         },
@@ -465,6 +473,13 @@
             if (entry.auth) {
                 $item.append($('<span class="torrserver-lan-item-auth"></span>').text('🔒 ' + T('torrserver_lan_auth_required')));
             }
+            // Per-item listener (not delegation) — Lampa's Controller triggers hover:enter
+            // directly on the focused element; delegation on the parent works for jQuery
+            // triggered events, but relying on the bubbling path is fragile across builds.
+            $item.on('hover:enter', function () {
+                try { state.onPick && state.onPick(url); } catch (e) { log('onPick error:', e && e.message); }
+                ResultsModal.close();
+            });
             state.$list.append($item);
 
             if (state.count === 1) {
