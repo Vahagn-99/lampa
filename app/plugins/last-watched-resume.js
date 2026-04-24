@@ -348,6 +348,19 @@
 
     function onActivity(e) {
         try {
+            // DIAGNOSTIC: log every activity event so we can see in TV logs
+            // whether this listener fires at all and what shape Lampa emits.
+            // Helps narrow down "events not arriving" vs "events arriving
+            // but with unexpected payload" on platforms that bypass the
+            // documented contract.
+            var debugComp = '?';
+            var debugType = e && e.type;
+            try {
+                if (e && e.object && e.object.activity) debugComp = e.object.activity.component;
+                else if (e && e.component)              debugComp = e.component;
+            } catch (ex2) {}
+            log('diag:activity', 'type=' + debugType, 'comp=' + debugComp);
+
             if (!e || !e.object || !e.object.activity) return;
             var act = e.object.activity;
             var card = act.movie || act.card;
@@ -381,6 +394,8 @@
             _origTorrentOpen = Lampa.Torrent.open;
             Lampa.Torrent.open = function (hash, card) {
                 try {
+                    log('diag:Torrent.open', 'hash=' + (hash || '').slice(0, 8),
+                        'card_id=' + (card && card.id));
                     if (card && card.id != null) {
                         rememberContext(card, 'torrent', { torrent_hash: hash });
                     }
@@ -388,7 +403,41 @@
                 return _origTorrentOpen.apply(this, arguments);
             };
             Lampa.Torrent.open.__lwr_patched = true;
+            log('init', 'patched=Torrent.open');
         } catch (ex) { warn('patch', 'Torrent.open fail', ex && ex.message); }
+    }
+
+    // DIAGNOSTIC: monkey-patch Lampa.Player.play so we KNOW whether the
+    // playback dispatcher is ever reached on this platform. If we see
+    // diag:Player.play firing but no Player.listener('start') / 'external',
+    // then Lampa.Player.listener.send() doesn't deliver to plugin-side
+    // subscribers on this build — and the data arg here is our last
+    // resort to capture the playback event.
+    var _origPlayerPlay = null;
+    function patchPlayerPlay() {
+        try {
+            if (!Lampa.Player || typeof Lampa.Player.play !== 'function') return;
+            if (Lampa.Player.play.__lwr_patched) return;
+            _origPlayerPlay = Lampa.Player.play;
+            Lampa.Player.play = function (data) {
+                try {
+                    log('diag:Player.play',
+                        'has_card=' + !!(data && data.card),
+                        'card_id=' + (data && data.card && data.card.id),
+                        'has_torrent_hash=' + !!(data && data.torrent_hash),
+                        'iptv=' + !!(data && data.iptv),
+                        'trailer=' + !!(data && data.trailer));
+                    if (data && data.card && data.card.id != null && !data.iptv && !data.trailer) {
+                        // Direct fallback: record from inside Player.play itself.
+                        // If Player.listener('start') doesn't fire, this still works.
+                        onPlayerStart(data, 'monkey-play');
+                    }
+                } catch (ex) {}
+                return _origPlayerPlay.apply(this, arguments);
+            };
+            Lampa.Player.play.__lwr_patched = true;
+            log('init', 'patched=Player.play');
+        } catch (ex) { warn('patch', 'Player.play fail', ex && ex.message); }
     }
 
     // Capture the file path from the torrent picker — this fires when the
@@ -417,6 +466,10 @@
 
     function onStateChanged(e) {
         try {
+            // DIAGNOSTIC: log every state:changed event so we can see what
+            // Lampa actually emits on this platform.
+            log('diag:state', 'target=' + (e && e.target), 'reason=' + (e && e.reason));
+
             if (!e || e.target !== 'timeline' || e.reason !== 'update') return;
             if (!e.data || e.data.hash == null) return;
             var hash = e.data.hash;
@@ -1064,6 +1117,7 @@
         try { Lampa.Listener.follow('torrent_file', onTorrentFile); }
         catch (e) { err('init', "Listener.follow('torrent_file') fail", e && e.message); }
         patchTorrentOpen();
+        patchPlayerPlay();
 
         bindCaptureHandlers();
 
