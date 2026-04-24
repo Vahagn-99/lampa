@@ -20,6 +20,14 @@
   <h1>Lampa Plugins</h1>
   <p class="sub">Плагины для медиа-плеера Lampa. Установка: <em>Настройки → Расширения → Добавить плагин</em> → вставить URL.</p>
 
+  <div class="plugin" style="background:#f0f7ff;border-color:#99c">
+    <h2>🛒 My Store — магазин плагинов (рекомендуется)</h2>
+    <p>Одна ссылка — полный доступ ко всем плагинам через нативный UI Lampa. Добавляет пункт <em>«Мои плагины»</em> в настройках; открывает встроенный магазин расширений с категориями и install/remove. Автоматически ставит сборщик логов на первом запуске.</p>
+    <code class="url">https://vahagn-99.github.io/lampa/plugins/store.js</code>
+  </div>
+
+  <p class="sub" style="margin-top:32px">Можно ставить и по одному (или через магазин выше):</p>
+
   <div class="plugin">
     <h2>KinoPub × AppleTV Bridge</h2>
     <p>При клике на серию в appleTV.js-списке открывает Z01 Online с KinoPub как источником по умолчанию. Требует <code>appleTV.js</code> и Z01 Premium.</p>
@@ -42,6 +50,12 @@
     <h2>One-Click Resume</h2>
     <p>Карточка «Продолжить одним кликом» сверху главного экрана — запускает последний фильм/серию сразу в плеере, с той же озвучкой, торрентом или балансером и с того же места. Без захода в карточку и повторного выбора источника.</p>
     <code class="url">https://vahagn-99.github.io/lampa/plugins/lazy-resume.js</code>
+  </div>
+
+  <div class="plugin">
+    <h2>Log Collector</h2>
+    <p>Собирает <code>console.log/warn/error</code> + ошибки + <code>request_error</code> из всех плагинов и стримит в лог-сервер на ПК по LAN. На ПК — одна команда <code>python3 log-server.py</code>. Работает на Tizen/WebOS/Android TV через fallback-цепочку XHR→sendBeacon→img. Автоматически ставится вместе со store.</p>
+    <code class="url">https://vahagn-99.github.io/lampa/plugins/log-collector.js</code>
   </div>
 
   <footer>

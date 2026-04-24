@@ -1,0 +1,79 @@
+{
+  "secuses": true,
+  "results": [
+    {
+      "hpu": "mine",
+      "title": "Мои плагины",
+      "results": [
+        {
+          "name": "lazy-resume",
+          "descr": "One-click resume card on the main screen",
+          "link": "https://vahagn-99.github.io/lampa/plugins/lazy-resume.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1,
+          "version": "0.1.0"
+        },
+        {
+          "name": "autoskip",
+          "descr": "Skip intros, credits, recaps, previews in series",
+          "link": "https://vahagn-99.github.io/lampa/plugins/autoskip.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1
+        },
+        {
+          "name": "store",
+          "descr": "Open my plugin store from Lampa settings",
+          "link": "https://vahagn-99.github.io/lampa/plugins/store.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1
+        }
+      ]
+    },
+    {
+      "hpu": "diagnostics",
+      "title": "Диагностика и отладка",
+      "results": [
+        {
+          "name": "lazy-resume-probe",
+          "descr": "Diagnostic probe for lazy-resume — Noty toasts on TV",
+          "link": "https://vahagn-99.github.io/lampa/plugins/lazy-resume-probe.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1
+        },
+        {
+          "name": "log-collector",
+          "descr": "Stream plugin logs to dev machine over LAN",
+          "link": "https://vahagn-99.github.io/lampa/plugins/log-collector.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1
+        }
+      ]
+    },
+    {
+      "hpu": "bridges",
+      "title": "Мосты к источникам",
+      "results": [
+        {
+          "name": "kinopub-bridge",
+          "descr": "AppleTV -> Z01 Online with KinoPub as default source",
+          "link": "https://vahagn-99.github.io/lampa/plugins/kinopub-bridge.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1
+        }
+      ]
+    },
+    {
+      "hpu": "server",
+      "title": "Серверные интеграции",
+      "results": [
+        {
+          "name": "torrserver-discovery",
+          "descr": "Find TorrServer on LAN — no manual IP:port entry",
+          "link": "https://vahagn-99.github.io/lampa/plugins/torrserver-discovery.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1
+        }
+      ]
+    }
+  ]
+}

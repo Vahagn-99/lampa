@@ -1,0 +1,98 @@
+# Lampa plugin registry — single source of truth.
+#
+# Edit this file when you add, rename, move, or remove a plugin. Then run:
+#
+#   ./scripts/build-catalog.py        # regenerate extensions.json for store.js
+#
+# Never edit the Python script to add a plugin — the registry is the interface.
+#
+# There is no standalone installer plugin anymore. store.js is the only user-
+# facing install URL; it auto-installs the plugins listed in `auto_install`
+# on first run (so the logger starts collecting from day one), and lets the
+# user browse/install everything else via Lampa's native extensions store UI.
+
+base_url: https://vahagn-99.github.io/lampa/plugins
+
+# URL Lampa's native store UI (opened by plugins/store.js) fetches at runtime.
+# Must match the final location where build-catalog.py writes extensions.json.
+catalog_url: https://vahagn-99.github.io/lampa/extensions.json
+
+# Plugins that store.js silently ensures are installed on every Lampa start.
+# Keep this minimal — it's non-opt-in from the user's POV. The logger is the
+# canonical baseline so log streaming works without the user touching anything.
+auto_install: [log-collector]
+
+# Store UI labels (shown inside Lampa → Настройки → <store title>)
+store:
+  title_ru: Мои плагины
+  title_en: My plugins
+
+# Category grouping for the catalog. Every plugin references one by key.
+categories:
+  mine:
+    title_ru: Мои плагины
+    title_en: My plugins
+
+  diagnostics:
+    title_ru: Диагностика и отладка
+    title_en: Diagnostics & debug
+
+  bridges:
+    title_ru: Мосты к источникам
+    title_en: Source bridges
+
+  server:
+    title_ru: Серверные интеграции
+    title_en: Server integrations
+
+plugins:
+
+  lazy-resume:
+    file: lazy-resume.js
+    aliases: [lr, resume]
+    description: One-click resume card on the main screen
+    author: "@vahagn_99"
+    category: mine
+    version: "0.1.0"
+
+  lazy-resume-probe:
+    file: lazy-resume-probe.js
+    aliases: [probe, lrp]
+    description: Diagnostic probe for lazy-resume — Noty toasts on TV
+    author: "@vahagn_99"
+    category: diagnostics
+
+  autoskip:
+    file: autoskip.js
+    aliases: [skip, skip-intro]
+    description: Skip intros, credits, recaps, previews in series
+    author: "@vahagn_99"
+    category: mine
+
+  torrserver-discovery:
+    file: torrserver-discovery.js
+    aliases: [tsd, torrserver]
+    description: Find TorrServer on LAN — no manual IP:port entry
+    author: "@vahagn_99"
+    category: server
+
+  kinopub-bridge:
+    file: kinopub-bridge.js
+    aliases: [kpb, kinopub]
+    description: AppleTV -> Z01 Online with KinoPub as default source
+    author: "@vahagn_99"
+    category: bridges
+
+  log-collector:
+    file: log-collector.js
+    aliases: [logs, collector]
+    description: Stream plugin logs to dev machine over LAN
+    author: "@vahagn_99"
+    category: diagnostics
+
+  store:
+    file: store.js
+    aliases: [marketplace]
+    description: Open my plugin store from Lampa settings
+    author: "@vahagn_99"
+    category: mine
