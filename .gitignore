@@ -10,15 +10,14 @@ lampa-source/
 # Artifacts from Playwright MCP test runs
 .playwright-mcp/
 
-# Personal Lampa dev-launcher — boots lampa-source + pre-loads localStorage session.
-# Not shipped; each dev runs their own.
+# Personal dev tooling — now lives in the companion private repo
+# (../lampa-plugins-dev/, github.com/vahagn-99/lampa-plugins-dev) and is
+# symlinked into this tree for in-place use. No trailing slashes so the
+# patterns match BOTH a local directory AND a symlink to one.
 lampa-dev.sh
-scripts/
+scripts
 dev-session.json
 .chrome-profile/
-
-# Claude Code local tooling (personal)
-.claude/
+.claude
 CLAUDE.md
-openspec/
-
+openspec
