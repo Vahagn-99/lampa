@@ -446,7 +446,7 @@
         }
         if (ownPrefix) range(ownPrefix, 1, 254, 2);
 
-        var fallbacks = ['192.168.0', '192.168.1', '10.0.0', '192.168.100'];
+        var fallbacks = ['192.168.0', '192.168.1', '192.168.10', '192.168.88', '10.0.0', '192.168.100'];
         for (var k = 0; k < extraPrefixes.length; k++) {
             if (fallbacks.indexOf(extraPrefixes[k]) === -1) fallbacks.push(extraPrefixes[k]);
         }
@@ -698,6 +698,29 @@
             var ports  = Util.parsePortsCSV(Lampa.Storage.field(PORTS_KEY) || '') ;
             if (!ports.length) ports = [SCAN_DEFAULT_PORT];
             var extras = Util.parseSubnetsCSV(Lampa.Storage.field(SUBNETS_KEY) || '');
+
+            // Auto-hint: derive a /24 from other LAN services the user
+            // already configured. Handles the common case where WebRTC
+            // can't detect own-prefix (mDNS randomisation on modern Chrome)
+            // but the TV is obviously on the same subnet as its torrserver,
+            // jackett, or the URL Lampa itself was loaded from.
+            try {
+                var hints = [
+                    (Lampa.Storage.field('torrserver_url')     || '').toString(),
+                    (Lampa.Storage.field('torrserver_url_two') || '').toString(),
+                    (Lampa.Storage.field('jackett_url')        || '').toString(),
+                    (window.location && window.location.hostname) ? window.location.hostname : ''
+                ];
+                for (var h = 0; h < hints.length; h++) {
+                    var hip   = Util.ipFromUrl(hints[h]) || (/^\d+\.\d+\.\d+\.\d+$/.test(hints[h]) ? hints[h] : null);
+                    if (!hip || !Util.isPrivateIPv4(hip)) continue;
+                    var hpref = Util.prefix24(hip);
+                    if (hpref && extras.indexOf(hpref) === -1) {
+                        extras.push(hpref);
+                        diag('subnet hint:', hpref, '(from ' + hints[h] + ')');
+                    }
+                }
+            } catch (e) {}
 
             LocalIP.getLocalPrefix(function (prefix) {
                 if (Scanner._aborted) return;
