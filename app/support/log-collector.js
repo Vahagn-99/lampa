@@ -833,11 +833,7 @@
                     name:        Lampa.Lang.translate('log_collector_lan_scan'),
                     description: Lampa.Lang.translate('log_collector_lan_scan_desc')
                 },
-                onChange: function () { Scanner.start('settings'); },
-                onRender: function ($el) {
-                    try { $el.on('hover:enter', function () { Scanner.start('settings'); }); }
-                    catch (e) {}
-                }
+                onChange: function () { Scanner.start('settings'); }
             });
 
             Lampa.SettingsApi.addParam({
