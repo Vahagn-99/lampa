@@ -853,9 +853,14 @@
                 }
             });
 
+            // NB: `values: ''` is a load-bearing quirk. Lampa's update() does
+            // `typeof values[name] == 'string' ? key : values[name][key]`; for
+            // plain input fields we want the first branch so the stored value
+            // is displayed literally. Leaving `values` out makes Lampa read
+            // `undefined[key]` and throw "Cannot read properties of undefined".
             Lampa.SettingsApi.addParam({
                 component: 'log_collector',
-                param: { name: NS + 'endpoint', type: 'input', default: '' },
+                param: { name: NS + 'endpoint', type: 'input', values: '', default: '' },
                 field: {
                     name:        Lampa.Lang.translate('log_collector_endpoint'),
                     description: Lampa.Lang.translate('log_collector_endpoint_desc')
@@ -864,7 +869,7 @@
 
             Lampa.SettingsApi.addParam({
                 component: 'log_collector',
-                param: { name: PORTS_KEY, type: 'input', default: '9999' },
+                param: { name: PORTS_KEY, type: 'input', values: '', default: '9999' },
                 field: {
                     name:        Lampa.Lang.translate('log_collector_lan_ports'),
                     description: Lampa.Lang.translate('log_collector_lan_ports_desc')
@@ -873,7 +878,7 @@
 
             Lampa.SettingsApi.addParam({
                 component: 'log_collector',
-                param: { name: SUBNETS_KEY, type: 'input', default: '' },
+                param: { name: SUBNETS_KEY, type: 'input', values: '', default: '' },
                 field: {
                     name:        Lampa.Lang.translate('log_collector_lan_subnets'),
                     description: Lampa.Lang.translate('log_collector_lan_subnets_desc')
