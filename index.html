@@ -6,60 +6,95 @@
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #222; line-height: 1.5; }
   h1 { font-size: 24px; margin-bottom: 4px; }
+  h2.cat { font-size: 15px; text-transform: uppercase; color: #777; letter-spacing: .4px; margin: 28px 0 8px; font-weight: 600; }
   .sub { color: #666; margin-bottom: 32px; }
-  .plugin { border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px; background: #fafafa; }
-  .plugin h2 { font-size: 17px; margin: 0 0 6px; }
-  .plugin p { margin: 0 0 12px; color: #555; font-size: 14px; }
+  .plugin { border: 1px solid #e0e0e0; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px; background: #fafafa; }
+  .plugin h3 { font-size: 16px; margin: 0 0 4px; font-weight: 600; }
+  .plugin p { margin: 0 0 10px; color: #555; font-size: 14px; }
+  .plugin .meta { color: #888; font-size: 12px; margin-top: 6px; }
+  .plugin .meta code { background: #eee; padding: 1px 5px; border-radius: 3px; }
   .url { font-family: "SF Mono", Menlo, monospace; font-size: 13px; background: #fff; border: 1px solid #ddd; padding: 8px 10px; border-radius: 4px; word-break: break-all; display: block; }
-  footer { color: #999; font-size: 13px; margin-top: 40px; }
+  .hero { background: #f0f7ff; border-color: #99c; }
+  .hero h2 { font-size: 17px; margin: 0 0 6px; }
+  .hero p { margin: 0 0 12px; color: #555; font-size: 14px; }
+  footer { color: #999; font-size: 13px; margin-top: 48px; }
   a { color: #0b66c3; text-decoration: none; }
   a:hover { text-decoration: underline; }
+  .loading { color: #999; font-style: italic; }
+  .error { color: #b00; }
 </style>
 </head>
 <body>
   <h1>Lampa Plugins</h1>
   <p class="sub">Плагины для медиа-плеера Lampa. Установка: <em>Настройки → Расширения → Добавить плагин</em> → вставить URL.</p>
 
-  <div class="plugin" style="background:#f0f7ff;border-color:#99c">
+  <div class="plugin hero">
     <h2>🛒 My Store — магазин плагинов (рекомендуется)</h2>
-    <p>Одна ссылка — полный доступ ко всем плагинам через нативный UI Lampa. Добавляет пункт <em>«Мои плагины»</em> в настройках; открывает встроенный магазин расширений с категориями и install/remove. Автоматически ставит сборщик логов на первом запуске.</p>
+    <p>Одна ссылка — полный доступ ко всем плагинам через нативный UI Lampa. Добавляет пункт <em>«Мои плагины»</em> в настройки, открывает встроенный магазин расширений с категориями и install/remove. Автоматически ставит сборщик логов на первом запуске.</p>
     <code class="url">https://vahagn-99.github.io/lampa/plugins/store.js</code>
   </div>
 
-  <p class="sub" style="margin-top:32px">Можно ставить и по одному (или через магазин выше):</p>
+  <p class="sub" style="margin-top:32px">Каталог плагинов (автоматически из <code>extensions.json</code>). Можно ставить по одной ссылке или через магазин выше:</p>
 
-  <div class="plugin">
-    <h2>KinoPub × AppleTV Bridge</h2>
-    <p>При клике на серию в appleTV.js-списке открывает Z01 Online с KinoPub как источником по умолчанию. Требует <code>appleTV.js</code> и Z01 Premium.</p>
-    <code class="url">https://vahagn-99.github.io/lampa/plugins/kinopub-bridge.js</code>
-  </div>
-
-  <div class="plugin">
-    <h2>Auto Skip (заставки и титры)</h2>
-    <p>Автоматический пропуск заставок, титров, рекапов и превью в сериалах. Источники: TheIntroDB, IntroDB.</p>
-    <code class="url">https://vahagn-99.github.io/lampa/plugins/autoskip.js</code>
-  </div>
-
-  <div class="plugin">
-    <h2>TorrServer LAN Discovery</h2>
-    <p>Ищет TorrServer в локальной сети — без ручного ввода IP и порта. Две точки входа: кнопка «Найти в сети» в настройках сервера и уведомление при неудачном подключении.</p>
-    <code class="url">https://vahagn-99.github.io/lampa/plugins/torrserver-discovery.js</code>
-  </div>
-
-  <div class="plugin">
-    <h2>One-Click Resume</h2>
-    <p>Карточка «Продолжить одним кликом» сверху главного экрана — запускает последний фильм/серию сразу в плеере, с той же озвучкой, торрентом или балансером и с того же места. Без захода в карточку и повторного выбора источника.</p>
-    <code class="url">https://vahagn-99.github.io/lampa/plugins/lazy-resume.js</code>
-  </div>
-
-  <div class="plugin">
-    <h2>Log Collector</h2>
-    <p>Собирает <code>console.log/warn/error</code> + ошибки + <code>request_error</code> из всех плагинов и стримит в лог-сервер на ПК по LAN. На ПК — одна команда <code>python3 log-server.py</code>. Работает на Tizen/WebOS/Android TV через fallback-цепочку XHR→sendBeacon→img. Автоматически ставится вместе со store.</p>
-    <code class="url">https://vahagn-99.github.io/lampa/plugins/log-collector.js</code>
+  <div id="plugins-list">
+    <p class="loading">Загрузка каталога…</p>
   </div>
 
   <footer>
-    <p>Автор: <a href="https://t.me/vahagn">@vahagn</a>. Исходники: <a href="https://github.com/vahagn-99/lampa">github.com/vahagn-99/lampa</a></p>
+    <p>Автор: <a href="https://t.me/vahagn">@vahagn</a>. Исходники: <a href="https://github.com/vahagn-99/lampa">github.com/vahagn-99/lampa</a>. Реестр: <a href="plugins.yml">plugins.yml</a> → <a href="extensions.json">extensions.json</a>.</p>
   </footer>
+
+<script>
+(function(){
+    function h(tag, attrs, children){
+        var el = document.createElement(tag);
+        if (attrs) for (var k in attrs) {
+            if (k === 'class') el.className = attrs[k];
+            else if (k === 'text') el.textContent = attrs[k];
+            else el.setAttribute(k, attrs[k]);
+        }
+        if (children) children.forEach(function(c){ if (c) el.appendChild(c); });
+        return el;
+    }
+
+    function renderPlugin(p){
+        var card = h('div', { class: 'plugin' });
+        card.appendChild(h('h3', { text: p.name || '—' }));
+        if (p.descr) card.appendChild(h('p', { text: p.descr }));
+
+        var metaParts = [];
+        if (p.author)  metaParts.push('Автор: ' + p.author);
+        if (p.version) metaParts.push('v' + p.version);
+        if (metaParts.length) card.appendChild(h('div', { class: 'meta', text: metaParts.join(' · ') }));
+
+        card.appendChild(h('code', { class: 'url', text: p.link || '' }));
+        return card;
+    }
+
+    function renderCatalog(data){
+        var root = document.getElementById('plugins-list');
+        root.innerHTML = '';
+        var cats = (data && data.results) || [];
+        if (!cats.length) {
+            root.appendChild(h('p', { class: 'loading', text: 'Каталог пуст.' }));
+            return;
+        }
+        cats.forEach(function(cat){
+            root.appendChild(h('h2', { class: 'cat', text: cat.title + ' · ' + ((cat.results || []).length) }));
+            (cat.results || []).forEach(function(p){ root.appendChild(renderPlugin(p)); });
+        });
+    }
+
+    // Cache-bust to force latest JSON on reload.
+    fetch('extensions.json?_=' + Date.now())
+        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(renderCatalog)
+        .catch(function(e){
+            var root = document.getElementById('plugins-list');
+            root.innerHTML = '';
+            root.appendChild(h('p', { class: 'error', text: 'Не удалось загрузить каталог: ' + (e && e.message ? e.message : e) }));
+        });
+})();
+</script>
 </body>
 </html>
