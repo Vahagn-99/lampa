@@ -186,10 +186,10 @@
         return '';
     }
 
-    function onPlayerStart(data) {
+    function onPlayerStart(data, evt) {
         var reason = eligibleReason(data);
         if (reason) {
-            log('player:start', 'skip', 'reason=' + reason);
+            log('player:start', 'evt=' + evt, 'skip', 'reason=' + reason);
             return;
         }
         var source = detectSource(data);
@@ -201,6 +201,7 @@
             saved_at: Date.now()
         };
         log('player:start',
+            'evt=' + evt,
             'card_id=' + entry.card_id,
             'S' + (entry.season || '-') + 'E' + (entry.episode || '-'),
             'kind=' + source.kind,
@@ -781,8 +782,15 @@
         registerSettings();
         registerRow();
 
-        try { Lampa.Player.listener.follow('start', onPlayerStart); }
-        catch (e) { err('init', 'Player.listener.follow fail', e && e.message); }
+        // Subscribe to BOTH 'start' (inner Lampa player) and 'external'
+        // (native Tizen AVPlay / WebOS / Android / iOS handoff). On Tizen,
+        // torrent playback often routes via the native player and Lampa
+        // emits 'external' instead of 'start' — without this, recording is
+        // silently a no-op for half the user base.
+        try { Lampa.Player.listener.follow('start',    function (d) { onPlayerStart(d, 'start'); }); }
+        catch (e) { err('init', "Player.listener.follow('start') fail", e && e.message); }
+        try { Lampa.Player.listener.follow('external', function (d) { onPlayerStart(d, 'external'); }); }
+        catch (e) { err('init', "Player.listener.follow('external') fail", e && e.message); }
 
         bindCaptureHandlers();
 
