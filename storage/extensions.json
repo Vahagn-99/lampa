@@ -6,14 +6,6 @@
       "title": "Мои плагины",
       "results": [
         {
-          "name": "lazy-resume",
-          "descr": "One-click resume card on the main screen",
-          "link": "https://vahagn-99.github.io/lampa/app/plugins/lazy-resume.js",
-          "author": "@vahagn_99",
-          "available_lampa": 1,
-          "version": "0.1.0"
-        },
-        {
           "name": "autoskip",
           "descr": "Skip intros, credits, recaps, previews in series",
           "link": "https://vahagn-99.github.io/lampa/app/plugins/autoskip.js",
@@ -21,22 +13,17 @@
           "available_lampa": 1
         },
         {
+          "name": "last-watched-resume",
+          "descr": "One-click resume — last 5 watched titles row on main screen, online + torrent",
+          "link": "https://vahagn-99.github.io/lampa/app/plugins/last-watched-resume.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1,
+          "version": "0.1.0"
+        },
+        {
           "name": "store",
           "descr": "Open my plugin store from Lampa settings",
           "link": "https://vahagn-99.github.io/lampa/app/store.js",
-          "author": "@vahagn_99",
-          "available_lampa": 1
-        }
-      ]
-    },
-    {
-      "hpu": "diagnostics",
-      "title": "Диагностика и отладка",
-      "results": [
-        {
-          "name": "lazy-resume-probe",
-          "descr": "Diagnostic probe for lazy-resume — Noty toasts on TV",
-          "link": "https://vahagn-99.github.io/lampa/app/plugins/lazy-resume-probe.js",
           "author": "@vahagn_99",
           "available_lampa": 1
         }
