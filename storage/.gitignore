@@ -1,0 +1,2 @@
+# Local-only dev state. Keep the rest of storage/ tracked.
+dev-session.json

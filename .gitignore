@@ -7,8 +7,8 @@ package-lock.json
 # never committed. See scripts/lampa-dev.sh for how it's consumed.
 vendor/
 
-# Local dev storage — saved browser session, any other transient local state.
-storage/
+# storage/ is tracked (holds generated extensions.json). Local-only files
+# inside it (dev-session.json) are ignored via storage/.gitignore.
 
 # Personal dev tooling — build scripts, Chrome launcher, puppeteer deps.
 # Not shipped; each dev runs their own.

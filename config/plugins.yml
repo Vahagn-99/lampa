@@ -15,7 +15,7 @@ base_url: https://vahagn-99.github.io/lampa/app/plugins
 
 # URL Lampa's native store UI (opened by app/store.js) fetches at runtime.
 # Must match the final location where build-catalog.py writes extensions.json.
-catalog_url: https://vahagn-99.github.io/lampa/app/extensions.json
+catalog_url: https://vahagn-99.github.io/lampa/storage/extensions.json
 
 # Plugins that store.js silently ensures are installed on every Lampa start.
 # Keep this minimal — it's non-opt-in from the user's POV. The logger is the
