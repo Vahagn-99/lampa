@@ -29,10 +29,12 @@
 
     var CATALOG_URL = 'https://vahagn-99.github.io/lampa/storage/extensions.json';
 
-    // URLs that will be injected into localStorage.plugins on first run if
-    // missing. Keep in sync with plugins.yml:auto_install.
+    // Infrastructure plugins silently injected into localStorage.plugins on
+    // first run if missing. These live under app/support/ and are NOT in the
+    // user-facing catalog (plugins.yml) — this list is their sole source of
+    // truth. Keep the set minimal; everything else goes through the store UI.
     var AUTO_INSTALL = [
-        'https://vahagn-99.github.io/lampa/app/plugins/log-collector.js'
+        'https://vahagn-99.github.io/lampa/app/support/log-collector.js'
     ];
 
     var STORE_COMPONENT = 'vahagn_store';

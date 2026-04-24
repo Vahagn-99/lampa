@@ -7,9 +7,12 @@
 # Never edit the Python script to add a plugin — the registry is the interface.
 #
 # There is no standalone installer plugin anymore. store.js is the only user-
-# facing install URL; it auto-installs the plugins listed in `auto_install`
-# on first run (so the logger starts collecting from day one), and lets the
-# user browse/install everything else via Lampa's native extensions store UI.
+# facing install URL; it opens Lampa's native extensions store UI against
+# `catalog_url` below, and users install/remove everything from there.
+#
+# Infrastructure plugins (anything under app/support/) are NOT listed here —
+# they're auto-injected into localStorage.plugins by store.js via its own
+# hardcoded AUTO_INSTALL list, so they never appear in the user-facing store.
 
 base_url: https://vahagn-99.github.io/lampa/app/plugins
 
@@ -17,10 +20,11 @@ base_url: https://vahagn-99.github.io/lampa/app/plugins
 # Must match the final location where build-catalog.py writes extensions.json.
 catalog_url: https://vahagn-99.github.io/lampa/storage/extensions.json
 
-# Plugins that store.js silently ensures are installed on every Lampa start.
-# Keep this minimal — it's non-opt-in from the user's POV. The logger is the
-# canonical baseline so log streaming works without the user touching anything.
-auto_install: [log-collector]
+# Optional: plugins from `plugins:` below that store.js should pre-install
+# silently on every Lampa start. Keep minimal — it's non-opt-in for users.
+# Infrastructure bootstrap (log-collector, etc.) goes through store.js's own
+# AUTO_INSTALL array, not through this key.
+auto_install: []
 
 # Store UI labels (shown inside Lampa → Настройки → <store title>)
 store:
@@ -82,13 +86,6 @@ plugins:
     description: AppleTV -> Z01 Online with KinoPub as default source
     author: "@vahagn_99"
     category: bridges
-
-  log-collector:
-    file: log-collector.js
-    aliases: [logs, collector]
-    description: Stream plugin logs to dev machine over LAN
-    author: "@vahagn_99"
-    category: diagnostics
 
   store:
     # Lives under app/ rather than plugins/, so pin an explicit url and

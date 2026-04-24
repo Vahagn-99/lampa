@@ -39,13 +39,6 @@
           "link": "https://vahagn-99.github.io/lampa/app/plugins/lazy-resume-probe.js",
           "author": "@vahagn_99",
           "available_lampa": 1
-        },
-        {
-          "name": "log-collector",
-          "descr": "Stream plugin logs to dev machine over LAN",
-          "link": "https://vahagn-99.github.io/lampa/app/plugins/log-collector.js",
-          "author": "@vahagn_99",
-          "available_lampa": 1
         }
       ]
     },

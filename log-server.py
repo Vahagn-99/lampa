@@ -2,7 +2,7 @@
 """
 log-server.py — collects logs from the Lampa log-collector plugin.
 
-Companion to plugins/log-collector.js. Listens on the LAN for log entries
+Companion to app/support/log-collector.js. Listens on the LAN for log entries
 from ANY TV platform (Android TV, Tizen, WebOS, Chromecast, desktop) via
 three transports in order of preference:
   1. POST /log                 — JSON body (batch or single entry)

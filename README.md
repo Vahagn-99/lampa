@@ -25,13 +25,14 @@ https://vahagn-99.github.io/lampa/app/store.js
 ```
 app/
 ├── store.js              # главная точка входа (URL выше)
-└── plugins/              # ровно один .js на плагин
-    ├── autoskip.js
-    ├── kinopub-bridge.js
-    ├── lazy-resume.js
-    ├── lazy-resume-probe.js
-    ├── log-collector.js
-    └── torrserver-discovery.js
+├── plugins/              # каталожные плагины — ровно один .js на файл
+│   ├── autoskip.js
+│   ├── kinopub-bridge.js
+│   ├── lazy-resume.js
+│   ├── lazy-resume-probe.js
+│   └── torrserver-discovery.js
+└── support/              # инфраструктурные плагины (не каталог)
+    └── log-collector.js  # стрим логов на dev-машину, авто-устанавливается
 
 config/
 └── plugins.yml           # источник истины: реестр, категории, auto_install
@@ -60,7 +61,7 @@ README.md
 
 ## Дебаг на телевизоре
 
-На ТВ нет DevTools. Для стрим-логов есть пара `app/plugins/log-collector.js` (ставится авто) + `log-server.py` (сервер на деве):
+На ТВ нет DevTools. Для стрим-логов есть пара `app/support/log-collector.js` (ставится авто) + `log-server.py` (сервер на деве):
 
 ```bash
 make logs            # HTTP на :9999, логи в ./logs
