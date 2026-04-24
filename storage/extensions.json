@@ -6,23 +6,23 @@
       "title": "Мои плагины",
       "results": [
         {
-          "name": "autoskip",
-          "descr": "Skip intros, credits, recaps, previews in series",
+          "name": "Автопропуск",
+          "descr": "Пропуск заставок, титров, обзоров прошлых серий и превью следующих",
           "link": "https://vahagn-99.github.io/lampa/app/plugins/autoskip.js",
           "author": "@vahagn_99",
           "available_lampa": 1
         },
         {
-          "name": "last-watched-resume",
-          "descr": "One-click resume — last 5 watched titles row on main screen, online + torrent",
+          "name": "Продолжить просмотр",
+          "descr": "Ряд «Последние просмотренные» на главном экране — 5 последних тайтлов, онлайн и торренты",
           "link": "https://vahagn-99.github.io/lampa/app/plugins/last-watched-resume.js",
           "author": "@vahagn_99",
           "available_lampa": 1,
           "version": "0.1.0"
         },
         {
-          "name": "store",
-          "descr": "Open my plugin store from Lampa settings",
+          "name": "Мой магазин плагинов",
+          "descr": "Открывает мой магазин плагинов из настроек Lampa",
           "link": "https://vahagn-99.github.io/lampa/app/store.js",
           "author": "@vahagn_99",
           "available_lampa": 1
@@ -34,8 +34,8 @@
       "title": "Мосты к источникам",
       "results": [
         {
-          "name": "kinopub-bridge",
-          "descr": "AppleTV -> Z01 Online with KinoPub as default source",
+          "name": "Мост KinoPub",
+          "descr": "AppleTV → Z01 Online с KinoPub в качестве источника по умолчанию",
           "link": "https://vahagn-99.github.io/lampa/app/plugins/kinopub-bridge.js",
           "author": "@vahagn_99",
           "available_lampa": 1
@@ -47,8 +47,8 @@
       "title": "Серверные интеграции",
       "results": [
         {
-          "name": "torrserver-discovery",
-          "descr": "Find TorrServer on LAN — no manual IP:port entry",
+          "name": "Поиск TorrServer",
+          "descr": "Автопоиск TorrServer в локальной сети — без ручного ввода IP:port",
           "link": "https://vahagn-99.github.io/lampa/app/plugins/torrserver-discovery.js",
           "author": "@vahagn_99",
           "available_lampa": 1

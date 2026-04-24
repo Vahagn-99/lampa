@@ -54,14 +54,16 @@ plugins:
   autoskip:
     file: autoskip.js
     aliases: [skip, skip-intro]
-    description: Skip intros, credits, recaps, previews in series
+    display_name: Автопропуск
+    description: Пропуск заставок, титров, обзоров прошлых серий и превью следующих
     author: "@vahagn_99"
     category: mine
 
   last-watched-resume:
     file: last-watched-resume.js
     aliases: [lwr, last-watched, resume, continue]
-    description: One-click resume — last 5 watched titles row on main screen, online + torrent
+    display_name: Продолжить просмотр
+    description: Ряд «Последние просмотренные» на главном экране — 5 последних тайтлов, онлайн и торренты
     author: "@vahagn_99"
     category: mine
     version: "0.1.0"
@@ -69,14 +71,16 @@ plugins:
   torrserver-discovery:
     file: torrserver-discovery.js
     aliases: [tsd, torrserver]
-    description: Find TorrServer on LAN — no manual IP:port entry
+    display_name: Поиск TorrServer
+    description: Автопоиск TorrServer в локальной сети — без ручного ввода IP:port
     author: "@vahagn_99"
     category: server
 
   kinopub-bridge:
     file: kinopub-bridge.js
     aliases: [kpb, kinopub]
-    description: AppleTV -> Z01 Online with KinoPub as default source
+    display_name: Мост KinoPub
+    description: AppleTV → Z01 Online с KinoPub в качестве источника по умолчанию
     author: "@vahagn_99"
     category: bridges
 
@@ -85,6 +89,9 @@ plugins:
     # skip the base_url + file derivation.
     url: https://vahagn-99.github.io/lampa/app/store.js
     aliases: [marketplace]
-    description: Open my plugin store from Lampa settings
+    display_name: Мой магазин плагинов
+    description: Открывает мой магазин плагинов из настроек Lampa
     author: "@vahagn_99"
     category: mine
+    # Landing page has a dedicated hero block for this; skip it in auto-gen.
+    landing_hidden: true

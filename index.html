@@ -32,17 +32,36 @@
     <code class="url">https://vahagn-99.github.io/lampa/app/store.js</code>
   </div>
 
-  <!--
-    Карточки плагинов добавляются руками. Шаблон:
-
-    <h2 class="cat">Категория</h2>
-    <div class="plugin">
-      <h3>Plugin Name</h3>
-      <p>Короткое описание.</p>
-      <div class="meta">Автор: @vahagn_99 · v0.1.0</div>
-      <code class="url">https://vahagn-99.github.io/lampa/plugins/&lt;name&gt;.js</code>
-    </div>
-  -->
+  <!-- Карточки ниже генерируются scripts/build-catalog.py из config/plugins.yml. Правь YAML, затем `make catalog` — всё, что внутри BEGIN/END, перезаписывается. -->
+  <!-- BEGIN:plugins -->
+  <h2 class="cat">Мои плагины</h2>
+  <div class="plugin">
+    <h3>Автопропуск</h3>
+    <p>Пропуск заставок, титров, обзоров прошлых серий и превью следующих</p>
+    <div class="meta">Автор: @vahagn_99</div>
+    <code class="url">https://vahagn-99.github.io/lampa/app/plugins/autoskip.js</code>
+  </div>
+  <div class="plugin">
+    <h3>Продолжить просмотр</h3>
+    <p>Ряд «Последние просмотренные» на главном экране — 5 последних тайтлов, онлайн и торренты</p>
+    <div class="meta">Автор: @vahagn_99 · v0.1.0</div>
+    <code class="url">https://vahagn-99.github.io/lampa/app/plugins/last-watched-resume.js</code>
+  </div>
+  <h2 class="cat">Мосты к источникам</h2>
+  <div class="plugin">
+    <h3>Мост KinoPub</h3>
+    <p>AppleTV → Z01 Online с KinoPub в качестве источника по умолчанию</p>
+    <div class="meta">Автор: @vahagn_99</div>
+    <code class="url">https://vahagn-99.github.io/lampa/app/plugins/kinopub-bridge.js</code>
+  </div>
+  <h2 class="cat">Серверные интеграции</h2>
+  <div class="plugin">
+    <h3>Поиск TorrServer</h3>
+    <p>Автопоиск TorrServer в локальной сети — без ручного ввода IP:port</p>
+    <div class="meta">Автор: @vahagn_99</div>
+    <code class="url">https://vahagn-99.github.io/lampa/app/plugins/torrserver-discovery.js</code>
+  </div>
+  <!-- END:plugins -->
 
   <footer>
     <p>Автор: <a href="https://t.me/vahagn">@vahagn</a>. Исходники: <a href="https://github.com/vahagn-99/lampa">github.com/vahagn-99/lampa</a>.</p>
