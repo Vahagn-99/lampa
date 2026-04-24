@@ -795,15 +795,30 @@
     }
 
     function lookupCardFromHistory(card_id) {
-        try {
-            if (!Lampa.Favorite || typeof Lampa.Favorite.get !== 'function') return null;
-            var hist = Lampa.Favorite.get('history') || [];
-            var i;
-            for (i = 0; i < hist.length; i++) {
-                if (hist[i] && hist[i].id == card_id) return hist[i];
-            }
-        } catch (e) {}
-        return null;
+        var idx = historyMap();
+        return idx[card_id] || null;
+    }
+
+    // Coalesce reconcile triggers — favorite events can fire several times
+    // per second during cloud sync; we want at most one reconcile per 500ms.
+    var _reconcileTimer = null;
+    function scheduleReconcile(reason) {
+        if (_reconcileTimer) return;
+        _reconcileTimer = setTimeout(function () {
+            _reconcileTimer = null;
+            log('reconcile:trigger', 'reason=' + reason);
+            reconcileFromTimeline();
+            // Also refresh the row so newly-added entries appear without
+            // requiring a navigation event. Activity.toggle is the
+            // accepted way to force a row redraw.
+            try {
+                if (Lampa.Activity && Lampa.Activity.active &&
+                    Lampa.Activity.active() && Lampa.Activity.active().component === 'main') {
+                    var act = Lampa.Activity.active();
+                    if (act && typeof act.toggle === 'function') act.toggle();
+                }
+            } catch (e) {}
+        }, 500);
     }
 
     function onStateChanged(e) {
@@ -811,6 +826,15 @@
             // DIAGNOSTIC: log every state:changed event so we can see what
             // Lampa actually emits on this platform.
             log('diag:state', 'target=' + (e && e.target), 'reason=' + (e && e.reason));
+
+            // Favorite list changed (initial sync, cloud pull, manual edit) —
+            // re-run reconcile because new history cards may match timeline
+            // hashes we couldn't match at boot. Rate-limit so cloud pulls
+            // that fire multiple times per second don't thrash.
+            if (e && e.target === 'favorite' && e.reason === 'read') {
+                scheduleReconcile('favorite_changed');
+                return;
+            }
 
             if (!e || e.target !== 'timeline' || e.reason !== 'update') return;
             if (!e.data || e.data.hash == null) return;
@@ -862,14 +886,44 @@
     // Card hydration from Lampa.Favorite('history')
     // ========================================================================
 
+    // Two-layer card source:
+    //   1. Lampa.Favorite.get({type: 'history'}) — official API (note the
+    //      {type:...} object form — passing a bare string returns empty
+    //      because get(params) reads params.type).
+    //   2. Lampa.Storage.get('favorite').card — local cache of every card
+    //      Lampa has touched, regardless of category. Used as fallback
+    //      when sync hasn't pulled cloud bookmarks yet at boot.
+    //
+    // The 'favorite' storage shape is {card: [...full cards], history: [ids],
+    // viewed: [ids], like: [ids], etc.}. We index all cards by id from any
+    // source we can find — caller dedupes naturally on lookup.
     function historyMap() {
         var idx = {};
         try {
-            if (!Lampa.Favorite || typeof Lampa.Favorite.get !== 'function') return idx;
-            var hist = Lampa.Favorite.get('history') || [];
-            var i;
-            for (i = 0; i < hist.length; i++) {
-                if (hist[i] && hist[i].id != null) idx[hist[i].id] = hist[i];
+            // Layer 1: official API
+            if (Lampa.Favorite && typeof Lampa.Favorite.get === 'function') {
+                var hist = [];
+                try { hist = Lampa.Favorite.get({ type: 'history' }) || []; } catch (e) {}
+                var i;
+                for (i = 0; i < hist.length; i++) {
+                    if (hist[i] && hist[i].id != null) idx[hist[i].id] = hist[i];
+                }
+            }
+        } catch (e) {}
+        try {
+            // Layer 2: storage fallback — pulls in every card Lampa has,
+            // including ones not yet synced into the in-memory history
+            // array right after boot.
+            var fav = Lampa.Storage.get('favorite', '{}');
+            if (typeof fav === 'string') {
+                try { fav = JSON.parse(fav); } catch (e) { fav = {}; }
+            }
+            if (fav && fav.card && fav.card.length) {
+                var j;
+                for (j = 0; j < fav.card.length; j++) {
+                    var c = fav.card[j];
+                    if (c && c.id != null && !idx[c.id]) idx[c.id] = c;
+                }
             }
         } catch (e) {}
         return idx;
