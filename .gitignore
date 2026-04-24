@@ -10,10 +10,10 @@ lampa-source/
 # Artifacts from Playwright MCP test runs
 .playwright-mcp/
 
-# Personal dev tooling — now lives in the companion private repo
-# (../lampa-plugins-dev/, github.com/vahagn-99/lampa-plugins-dev) and is
-# symlinked into this tree for in-place use. No trailing slashes so the
-# patterns match BOTH a local directory AND a symlink to one.
+# Personal dev tooling — lives in ../dev/ (companion private repo,
+# github.com/Vahagn-99/lampa-dev) and is symlinked into this tree for
+# in-place use. No trailing slashes so the patterns match BOTH a local
+# directory AND a symlink to one.
 lampa-dev.sh
 scripts
 dev-session.json
