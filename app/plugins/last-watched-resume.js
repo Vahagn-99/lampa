@@ -41,10 +41,30 @@
     var QUEUE_KEY            = NS + 'queue';
     var ENABLED_KEY          = NS + 'enabled';
     var CLEAR_KEY            = NS + 'clear';
+    var TRACE_KEY            = NS + 'trace';
     var ROW_NAME             = 'last_watched_resume';
     var MAX_QUEUE            = 5;
     var AUTOCLICK_TIMEOUT_MS = 3000;
     var MIN_APP_DIGITAL      = 300;
+
+    // Trace mode — when enabled, monkey-patches Lampa.Listener.send,
+    // Lampa.Player.listener.send, Lampa.PlayerVideo.listener.send,
+    // Lampa.Storage.set, Lampa.Activity.push so EVERY event / write /
+    // navigation produces a [LastWatchedResume] trace:* log line. Default
+    // ON for now (we're debugging). Toggle via Settings → Продолжить
+    // одним кликом → "Trace mode" once recording works reliably.
+    //
+    // These events are noisy (multiple per second) and excluded from trace
+    // to keep log volume sane.
+    var TRACE_NOISY = {
+        'timeupdate':1, 'progress':1, 'tracks':1, 'subs':1,
+        'mousemove':1, 'mouseover':1, 'mouseout':1,
+        'render':1, 'draw':1, 'animation':1, 'frame':1
+    };
+    // Storage keys updated very frequently — skip in trace.
+    var TRACE_NOISY_STORAGE = {
+        'volume':1, 'mute':1, 'speed':1, 'time':1
+    };
 
     var _initialized        = false;
     var _captureBound       = false;
@@ -88,6 +108,141 @@
             args.unshift(LOG_PREFIX);
             console.error.apply(console, args);
         } catch (e) {}
+    }
+
+    // ========================================================================
+    // Trace mode — full visibility into Lampa internals during diagnosis
+    // ========================================================================
+
+    function traceEnabled() {
+        try { return Lampa.Storage.field(TRACE_KEY) !== false; } catch (e) { return true; }
+    }
+
+    function summarize(obj, maxKeys) {
+        if (obj == null) return 'null';
+        if (typeof obj !== 'object') {
+            var s = String(obj);
+            return s.length > 80 ? s.slice(0, 80) + '…' : s;
+        }
+        if (obj.length !== undefined && typeof obj === 'object') {
+            return 'array[' + obj.length + ']';
+        }
+        var keys = [];
+        var k, count = 0;
+        for (k in obj) {
+            if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+            keys.push(k);
+            if (++count >= (maxKeys || 8)) { keys.push('…'); break; }
+        }
+        return '{' + keys.join(',') + '}';
+    }
+
+    // Wrap a Subscribe-style listener's `send(name, data)` so every event
+    // produces a trace log line. Skips noisy event names. Idempotent guard
+    // via `__lwr_traced` marker.
+    function patchListenerForTrace(listener, label) {
+        try {
+            if (!listener || typeof listener.send !== 'function') return;
+            if (listener.send.__lwr_traced) return;
+            var orig = listener.send;
+            listener.send = function (name, data) {
+                try {
+                    if (traceEnabled() && !TRACE_NOISY[name]) {
+                        log('trace:' + label,
+                            'event=' + name,
+                            'data=' + summarize(data));
+                    }
+                } catch (e) {}
+                return orig.apply(this, arguments);
+            };
+            listener.send.__lwr_traced = true;
+            log('init', 'traced=' + label);
+        } catch (ex) { warn('trace', 'patch ' + label + ' fail', ex && ex.message); }
+    }
+
+    // Wrap Lampa.Storage.set to log every persistent write — narrows down
+    // exactly which keys Lampa touches during playback (file_view_<id>,
+    // online_view, torrents_view, etc).
+    var _origStorageSet = null;
+    function patchStorageSet() {
+        try {
+            if (!Lampa.Storage || typeof Lampa.Storage.set !== 'function') return;
+            if (Lampa.Storage.set.__lwr_traced) return;
+            _origStorageSet = Lampa.Storage.set;
+            Lampa.Storage.set = function (key, value, scope) {
+                try {
+                    if (traceEnabled() && !TRACE_NOISY_STORAGE[key]) {
+                        // Truncate value to keep log size sane; structure
+                        // (object keys / array length) usually enough.
+                        var summary;
+                        if (typeof value === 'string') {
+                            summary = value.length > 60 ? value.slice(0, 60) + '…(' + value.length + ')' : value;
+                        } else if (typeof value === 'object' && value) {
+                            summary = summarize(value);
+                        } else {
+                            summary = String(value);
+                        }
+                        log('trace:Storage.set', 'key=' + key, 'value=' + summary);
+                    }
+                } catch (e) {}
+                return _origStorageSet.apply(this, arguments);
+            };
+            Lampa.Storage.set.__lwr_traced = true;
+            log('init', 'traced=Storage.set');
+        } catch (ex) { warn('trace', 'Storage.set patch fail', ex && ex.message); }
+    }
+
+    // Wrap Lampa.Activity.push to capture every screen navigation.
+    var _origActivityPush = null;
+    function patchActivityPush() {
+        try {
+            if (!Lampa.Activity || typeof Lampa.Activity.push !== 'function') return;
+            if (Lampa.Activity.push.__lwr_traced) return;
+            _origActivityPush = Lampa.Activity.push;
+            Lampa.Activity.push = function (object) {
+                try {
+                    if (traceEnabled() && object) {
+                        log('trace:Activity.push',
+                            'component=' + object.component,
+                            'method=' + (object.method || '-'),
+                            'has_movie=' + !!object.movie,
+                            'movie_id=' + (object.movie && object.movie.id));
+                    }
+                } catch (e) {}
+                return _origActivityPush.apply(this, arguments);
+            };
+            Lampa.Activity.push.__lwr_traced = true;
+            log('init', 'traced=Activity.push');
+        } catch (ex) { warn('trace', 'Activity.push patch fail', ex && ex.message); }
+    }
+
+    function installTrace() {
+        if (!traceEnabled()) {
+            log('init', 'trace=disabled');
+            return;
+        }
+        // Global app-level listener bus (activity, state:changed, full,
+        // request_error, app, online, torrent_file, settings, etc.)
+        try { patchListenerForTrace(Lampa.Listener, 'Lampa.Listener'); } catch (e) {}
+        // Player-internal listener (start, external, create, ready,
+        // destroy, playlist, callback, stat).
+        try { if (Lampa.Player && Lampa.Player.listener)
+            patchListenerForTrace(Lampa.Player.listener, 'Player.listener'); } catch (e) {}
+        // PlayerVideo-internal listener (timeupdate, error, tracks, subs,
+        // ended, ready, fullscreen).
+        try { if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener)
+            patchListenerForTrace(Lampa.PlayerVideo.listener, 'PlayerVideo.listener'); } catch (e) {}
+        // Storage / Settings listeners — see what changes.
+        try { if (Lampa.Storage && Lampa.Storage.listener)
+            patchListenerForTrace(Lampa.Storage.listener, 'Storage.listener'); } catch (e) {}
+        try { if (Lampa.Settings && Lampa.Settings.listener)
+            patchListenerForTrace(Lampa.Settings.listener, 'Settings.listener'); } catch (e) {}
+        // Activity — also listener if exposed
+        try { if (Lampa.Activity && Lampa.Activity.listener)
+            patchListenerForTrace(Lampa.Activity.listener, 'Activity.listener'); } catch (e) {}
+        // Direct API patches
+        patchStorageSet();
+        patchActivityPush();
     }
 
     // ========================================================================
@@ -1009,6 +1164,14 @@
                 lwr_cleared_noty: {
                     ru: 'Запомненное удалено',
                     en: 'Saved entries cleared'
+                },
+                lwr_trace: {
+                    ru: 'Trace-режим (диагностика)',
+                    en: 'Trace mode (diagnostics)'
+                },
+                lwr_trace_desc: {
+                    ru: 'Логировать ВСЕ события Lampa (Listener / Storage / Activity / Player). Используется для разбора почему ряд пустой. Шумно — выключи когда не нужно.',
+                    en: 'Log EVERY Lampa event (Listener / Storage / Activity / Player). For diagnosing why the row stays empty. Very chatty — turn off when not needed.'
                 }
             });
         } catch (e) { err('i18n', 'register fail', e && e.message); }
@@ -1054,6 +1217,17 @@
                         }
                     } catch (e) {}
                     log('settings:cleared');
+                }
+            });
+            Lampa.SettingsApi.addParam({
+                component: 'last_watched_resume',
+                param:     { name: TRACE_KEY, type: 'trigger', default: true },
+                field:     {
+                    name:        tr('lwr_trace'),
+                    description: tr('lwr_trace_desc')
+                },
+                onChange:  function (value) {
+                    log('settings:trace', 'value=' + value);
                 }
             });
         } catch (e) { err('settings', 'register fail', e && e.message); }
@@ -1118,6 +1292,10 @@
         catch (e) { err('init', "Listener.follow('torrent_file') fail", e && e.message); }
         patchTorrentOpen();
         patchPlayerPlay();
+
+        // Install full trace BEFORE other plugins start emitting — this
+        // way we capture late init events from neighbouring plugins too.
+        installTrace();
 
         bindCaptureHandlers();
 
