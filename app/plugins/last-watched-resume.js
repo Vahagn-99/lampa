@@ -503,24 +503,23 @@
 
     function onActivity(e) {
         try {
-            // DIAGNOSTIC: log every activity event so we can see in TV logs
-            // whether this listener fires at all and what shape Lampa emits.
-            // Helps narrow down "events not arriving" vs "events arriving
-            // but with unexpected payload" on platforms that bypass the
-            // documented contract.
-            var debugComp = '?';
-            var debugType = e && e.type;
-            try {
-                if (e && e.object && e.object.activity) debugComp = e.object.activity.component;
-                else if (e && e.component)              debugComp = e.component;
-            } catch (ex2) {}
-            log('diag:activity', 'type=' + debugType, 'comp=' + debugComp);
+            // Lampa fires activity events as {component, type, object} —
+            // component is a string (top-level), object is the activity
+            // descriptor with movie/card/url/etc. The prior code path
+            // `e.object.activity.component` was wrong (activity is a
+            // method on the descriptor, not a nested descriptor) → handler
+            // returned early on every event, never populating context.
+            if (!e) return;
+            var comp = (typeof e.component === 'string') ? e.component
+                     : (e.object && typeof e.object.component === 'string') ? e.object.component
+                     : '?';
+            log('diag:activity', 'type=' + (e.type || '?'), 'comp=' + comp);
 
-            if (!e || !e.object || !e.object.activity) return;
-            var act = e.object.activity;
-            var card = act.movie || act.card;
+            if (!e.object) return;
+            var card = e.object.movie || e.object.card;
             if (!card || card.id == null) return;
-            if (act.component === 'online') {
+
+            if (comp === 'online') {
                 // Lampa stores last balanser under 'online_last_balanser';
                 // older builds use 'online_balanser'. Try both.
                 var bal = '';
@@ -529,13 +528,65 @@
                     try { bal = Lampa.Storage.get('online_balanser', '') || ''; } catch (ex) {}
                 }
                 rememberContext(card, 'online', { balanser: bal });
-            } else if (act.component === 'torrents') {
+                persistPendingSource(card.id, { kind: 'online', balanser: bal });
+            } else if (comp === 'torrents') {
                 // Card opened the torrent search list — remember as torrent
                 // candidate; we'll narrow torrent_hash + file_path later via
                 // Torrent.open patch + torrent_file listener.
                 rememberContext(card, 'torrent', {});
+                persistPendingSource(card.id, { kind: 'torrent' });
             }
         } catch (ex) { warn('activity', 'fail', ex && ex.message); }
+    }
+
+    // ------------------------------------------------------------------------
+    // Pending-source side table — survives JS freeze during native playback.
+    //
+    // Tizen / WebOS / Android native players background the WebView during
+    // playback; log-collector buffer is lost on next reload. But Lampa.Storage
+    // writes are synchronous and persistent — so we mirror "user navigated to
+    // online/torrent for card X" into Storage immediately. On next boot the
+    // reconcile step reads file_view_<profile>, finds new timeline entries,
+    // looks up pending source by card_id, and adds queue entries for plays
+    // we never saw events for.
+    // ------------------------------------------------------------------------
+
+    var PENDING_SRC_KEY = NS + 'pending_src';
+    var PENDING_SRC_CAP = 30; // remember source for up to 30 recent cards
+
+    function pendingSrcMap() {
+        try {
+            var raw = Lampa.Storage.get(Store.scope(PENDING_SRC_KEY), '{}');
+            if (typeof raw === 'string') {
+                try { raw = JSON.parse(raw); } catch (e) { raw = {}; }
+            }
+            return (raw && typeof raw === 'object') ? raw : {};
+        } catch (e) { return {}; }
+    }
+
+    function persistPendingSource(card_id, source) {
+        try {
+            if (card_id == null) return;
+            var map = pendingSrcMap();
+            map[card_id] = { kind: source.kind, balanser: source.balanser || null,
+                             torrent_hash: source.torrent_hash || null,
+                             file_path: source.file_path || null,
+                             ts: Date.now() };
+            // Cap by trimming oldest entries when over capacity.
+            var keys = Object.keys(map);
+            if (keys.length > PENDING_SRC_CAP) {
+                keys.sort(function (a, b) { return (map[a].ts || 0) - (map[b].ts || 0); });
+                var drop = keys.length - PENDING_SRC_CAP;
+                var i;
+                for (i = 0; i < drop; i++) delete map[keys[i]];
+            }
+            Lampa.Storage.set(Store.scope(PENDING_SRC_KEY), map);
+        } catch (e) { warn('pending_src', 'persist fail', e && e.message); }
+    }
+
+    function readPendingSource(card_id) {
+        var map = pendingSrcMap();
+        return map[card_id] || null;
     }
 
     // Monkey-patch Lampa.Torrent.open(hash, card) to capture torrent context
@@ -553,6 +604,7 @@
                         'card_id=' + (card && card.id));
                     if (card && card.id != null) {
                         rememberContext(card, 'torrent', { torrent_hash: hash });
+                        persistPendingSource(card.id, { kind: 'torrent', torrent_hash: hash });
                     }
                 } catch (ex) {}
                 return _origTorrentOpen.apply(this, arguments);
@@ -613,10 +665,145 @@
                     log('context:torrent_file',
                         'card_id=' + _pendingContext[i].card.id,
                         'path=' + e.element.path);
+                    // Mirror to persistent side-table — reconcile on next
+                    // boot needs this even if JS freezes during playback.
+                    persistPendingSource(_pendingContext[i].card.id, {
+                        kind:         'torrent',
+                        torrent_hash: _pendingContext[i].torrent_hash || (e.element.torrent_hash || null),
+                        file_path:    e.element.path
+                    });
                     break;
                 }
             }
         } catch (ex) { warn('torrent_file', 'fail', ex && ex.message); }
+    }
+
+    // ========================================================================
+    // Reconcile-on-boot — recover from JS-frozen playback sessions
+    // ========================================================================
+    //
+    // When Tizen native player takes over the WebView, log-collector buffer
+    // and even my Player.play monkey-patch may not run. But Lampa.Timeline
+    // writes synchronously to file_view_<profile_id> in localStorage during
+    // playback (and especially on its destroy). On next Lampa boot, this
+    // storage holds the truth about what was watched.
+    //
+    // Strategy:
+    //   1. Read file_view_<profile> from Storage.
+    //   2. For each hash with road.percent > 0:
+    //      - if it's a hash we've already represented in our queue, skip
+    //      - else reverse-lookup card from Lampa.Favorite('history')
+    //      - if matched: read source from PENDING_SRC_KEY map (saved by
+    //        activity / Torrent.open patches before playback)
+    //      - upsert queue entry (idempotent — Store.upsert dedupes by card_id)
+    //
+    // This catches:
+    //   - Tizen torrent playback that bypassed all in-flight hooks.
+    //   - Restored sessions where JS event loop was throttled.
+    //   - Quirky online plugins that don't fire activity events.
+
+    function reconcileFromTimeline() {
+        try {
+            var pid = Store.profileId();
+            var fileViewKey = 'file_view' + (pid ? '_' + pid : '');
+            var raw;
+            try { raw = Lampa.Storage.get(fileViewKey, '{}'); }
+            catch (e) { warn('reconcile', 'storage.get fail', e && e.message); return; }
+            if (typeof raw === 'string') {
+                try { raw = JSON.parse(raw); } catch (e) { raw = {}; }
+            }
+            if (!raw || typeof raw !== 'object') return;
+
+            var hashCount = 0;
+            var k; for (k in raw) { if (Object.prototype.hasOwnProperty.call(raw, k)) hashCount++; }
+            log('reconcile:start', 'fileViewKey=' + fileViewKey, 'hashes=' + hashCount);
+            if (!hashCount) { log('reconcile:done', 'no_hashes'); return; }
+
+            // Build set of hashes already covered by our queue (to skip).
+            var covered = {};
+            var queue = Store.getQueue();
+            var i;
+            for (i = 0; i < queue.length; i++) {
+                var entry = queue[i];
+                if (!entry || entry.card_id == null) continue;
+                // Look up card from history to compute its hashes
+                var cardForCovered = lookupCardFromHistory(entry.card_id);
+                if (!cardForCovered) continue;
+                var hs = computeCardHashes(cardForCovered);
+                var j; for (j = 0; j < hs.length; j++) covered[hs[j]] = true;
+            }
+
+            // Build hash → card index from history
+            var hist = Lampa.Favorite && Lampa.Favorite.get ? (Lampa.Favorite.get('history') || []) : [];
+            log('reconcile:scan', 'history=' + hist.length, 'covered=' + Object.keys(covered).length);
+            var hashToCard = {};
+            for (i = 0; i < hist.length; i++) {
+                var c = hist[i];
+                if (!c || c.id == null) continue;
+                var cardHashes = computeCardHashes(c);
+                var hi;
+                for (hi = 0; hi < cardHashes.length; hi++) {
+                    if (!hashToCard[cardHashes[hi]]) hashToCard[cardHashes[hi]] = c;
+                }
+            }
+
+            // Walk timeline entries and reconstruct queue items
+            var added = 0;
+            var unmatched = 0;
+            var hashes = Object.keys(raw);
+            // Sort hashes by some heuristic? They have no timestamp. Just
+            // process in insertion order and rely on dedup.
+            for (i = 0; i < hashes.length; i++) {
+                var h = String(hashes[i]);
+                var road = raw[h];
+                if (!road) continue;
+                var percent = (typeof road === 'object') ? road.percent : road;
+                if (!percent || percent <= 0) continue;
+                if (covered[h]) continue;
+                var card = hashToCard[h];
+                if (!card) { unmatched++; continue; }
+                var se = reverseSeasonEpisode(card, h);
+                var srcInfo = readPendingSource(card.id);
+                var source;
+                if (srcInfo && srcInfo.kind === 'torrent') {
+                    source = {
+                        kind:         'torrent',
+                        torrent_hash: srcInfo.torrent_hash || '',
+                        file_path:    srcInfo.file_path    || ''
+                    };
+                } else if (srcInfo && srcInfo.kind === 'online') {
+                    source = { kind: 'online', balanser: srcInfo.balanser || '' };
+                } else {
+                    source = { kind: 'unknown' };
+                }
+                Store.upsert({
+                    card_id:  card.id,
+                    season:   se.season,
+                    episode:  se.episode,
+                    source:   source,
+                    saved_at: Date.now()
+                });
+                added++;
+                log('reconcile:added',
+                    'card_id=' + card.id,
+                    'S' + (se.season || '-') + 'E' + (se.episode || '-'),
+                    'kind=' + source.kind,
+                    'hash=' + h);
+            }
+            log('reconcile:done', 'added=' + added, 'unmatched=' + unmatched);
+        } catch (ex) { err('reconcile', 'fail', ex && ex.message); }
+    }
+
+    function lookupCardFromHistory(card_id) {
+        try {
+            if (!Lampa.Favorite || typeof Lampa.Favorite.get !== 'function') return null;
+            var hist = Lampa.Favorite.get('history') || [];
+            var i;
+            for (i = 0; i < hist.length; i++) {
+                if (hist[i] && hist[i].id == card_id) return hist[i];
+            }
+        } catch (e) {}
+        return null;
     }
 
     function onStateChanged(e) {
@@ -1296,6 +1483,12 @@
         // Install full trace BEFORE other plugins start emitting — this
         // way we capture late init events from neighbouring plugins too.
         installTrace();
+
+        // Reconcile-on-boot — pulls in any plays we missed during prior
+        // session because JS was frozen by native player. Runs once per
+        // boot, scans Lampa's own file_view_<profile> + Favorite('history').
+        try { reconcileFromTimeline(); }
+        catch (e) { err('init', 'reconcile fail', e && e.message); }
 
         bindCaptureHandlers();
 
