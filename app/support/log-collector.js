@@ -18,9 +18,17 @@
  * Lampa from HTTP (Tizen widget typically does) or start log-server.py
  * with --tls and accept the self-signed cert on the TV side.
  *
- * Opt-in: disabled by default. Flip "Включить" in Настройки → Сборщик логов
- * + enter endpoint URL. Restart Lampa to capture boot-time logs from
- * other plugins.
+ * Opt-in: disabled by default. In Настройки → Сборщик логов either press
+ * «Найти log-server в сети» to auto-discover the dev-machine endpoint on
+ * the LAN (HTTP probe of /health looking for "lampa-log-server"), or type
+ * it in by hand. Then flip «Включить». Restart Lampa to capture boot-time
+ * logs from other plugins.
+ *
+ * LAN discovery: explicit-trigger only (no scanning at app start, no auto
+ * scanning on settings open). Strategy: own /24 first (from WebRTC or
+ * Android bridge), then fallback subnets 192.168.0/1, 10.0.0, 192.168.100.
+ * Probe timeout 1500 ms, concurrency 8 (4 on TV). Ported from torrserver-
+ * discovery, adapted for log-server.py's single-port default (9999).
  *
  * Log prefix:   [LogCollector]
  * Global guard: window.__logCollectorLoaded
@@ -267,6 +275,499 @@
     } catch (e) {}
 
     // ========================================================================
+    // LAN scanner — auto-discover log-server.py on the local network.
+    // Triggered only on explicit user action (settings button). Probe hits
+    // GET http://<ip>:<port>/health and validates response body contains
+    // "lampa-log-server" — log-server.py's self-identification string.
+    // ========================================================================
+
+    var SCAN_DEFAULT_PORT  = 9999;
+    var SCAN_PROBE_TIMEOUT = 1500;
+    var SCAN_SIGNATURE     = 'lampa-log-server';
+    var LAST_FOUND_KEY     = NS + 'last_found';
+    var PORTS_KEY          = NS + 'ports';
+    var SUBNETS_KEY        = NS + 'extra_subnets';
+
+    var Util = {
+        parsePortsCSV: function (s) {
+            if (!s) return [];
+            var parts = String(s).split(',');
+            var out = [];
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i].replace(/\s+/g, '');
+                if (!p || !/^\d+$/.test(p)) continue;
+                var n = parseInt(p, 10);
+                if (!isNaN(n) && n >= 1 && n <= 65535 && out.indexOf(n) === -1) out.push(n);
+            }
+            return out;
+        },
+        parseSubnetsCSV: function (s) {
+            if (!s) return [];
+            var parts = String(s).split(',');
+            var out = [];
+            var re = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i].replace(/\s+/g, '');
+                if (!p) continue;
+                var m = p.match(re);
+                if (!m) continue;
+                var a = +m[1], b = +m[2], c = +m[3];
+                if (a > 255 || b > 255 || c > 255) continue;
+                var pref = a + '.' + b + '.' + c;
+                if (out.indexOf(pref) === -1) out.push(pref);
+            }
+            return out;
+        },
+        prefix24: function (ip) {
+            if (!ip) return null;
+            var m = String(ip).match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\./);
+            return m ? (m[1] + '.' + m[2] + '.' + m[3]) : null;
+        },
+        lastOctet: function (ip) {
+            var m = String(ip).match(/\.(\d{1,3})$/);
+            return m ? parseInt(m[1], 10) : null;
+        },
+        ipFromUrl: function (u) {
+            if (!u) return null;
+            var m = String(u).match(/\/\/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)(?::\d+)?/);
+            return m ? m[1] : null;
+        },
+        isPrivateIPv4: function (ip) {
+            var m = String(ip).match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+            if (!m) return false;
+            var a = +m[1], b = +m[2];
+            if (a === 10) return true;
+            if (a === 192 && b === 168) return true;
+            if (a === 172 && b >= 16 && b <= 31) return true;
+            return false;
+        }
+    };
+
+    function diag() {
+        try {
+            var args = ['[' + SELF_TAG + ']'];
+            for (var i = 0; i < arguments.length; i++) args.push(arguments[i]);
+            console.log.apply(console, args);
+        } catch (e) {}
+    }
+
+    function tr(key) {
+        try { return Lampa.Lang.translate(key); } catch (e) { return key; }
+    }
+
+    // ------------------------------------------------------------------------
+    // Local-IP detection — Android bridge first, WebRTC fallback.
+    // ------------------------------------------------------------------------
+
+    var LocalIP = {
+        getLocalPrefix: function (cb) {
+            try {
+                if (window.Android) {
+                    var methods = ['getLocalIp', 'getLocalIP', 'localIp', 'getIp'];
+                    for (var i = 0; i < methods.length; i++) {
+                        if (typeof window.Android[methods[i]] !== 'function') continue;
+                        try {
+                            var ip = window.Android[methods[i]]();
+                            if (ip && Util.isPrivateIPv4(ip)) {
+                                diag('local IP via Android.' + methods[i] + ':', ip);
+                                return cb(Util.prefix24(ip));
+                            }
+                        } catch (e) {}
+                    }
+                }
+            } catch (e) {}
+            LocalIP._tryWebRTC(function (ip) {
+                if (ip) diag('local IP via WebRTC:', ip);
+                cb(ip ? Util.prefix24(ip) : null);
+            });
+        },
+        _tryWebRTC: function (cb) {
+            var RTC = window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection;
+            if (!RTC) return cb(null);
+            var pc = null, timer = null, done = false;
+            function finish(ip) {
+                if (done) return;
+                done = true;
+                if (timer) clearTimeout(timer);
+                try { if (pc) pc.close(); } catch (e) {}
+                cb(ip);
+            }
+            try {
+                pc = new RTC({ iceServers: [] });
+                pc.createDataChannel('');
+                pc.onicecandidate = function (e) {
+                    if (!e || !e.candidate || !e.candidate.candidate) return;
+                    var c = e.candidate.candidate;
+                    if (c.indexOf('.local') >= 0) return;
+                    var ms = c.match(/(\d+\.\d+\.\d+\.\d+)/g);
+                    if (!ms) return;
+                    for (var i = 0; i < ms.length; i++) {
+                        if (Util.isPrivateIPv4(ms[i])) return finish(ms[i]);
+                    }
+                };
+                pc.createOffer().then(function (o) { return pc.setLocalDescription(o); })
+                                 .catch(function () { finish(null); });
+                timer = setTimeout(function () { finish(null); }, 1500);
+            } catch (e) { finish(null); }
+        }
+    };
+
+    // ------------------------------------------------------------------------
+    // Candidate list — three-phase priority order. Deduped.
+    // ------------------------------------------------------------------------
+
+    function buildCandidates(lastIp, ownPrefix, extraPrefixes, ports) {
+        var seen = {};
+        var out  = [];
+        function push(ip, phase) {
+            for (var i = 0; i < ports.length; i++) {
+                var key = ip + ':' + ports[i];
+                if (!seen[key]) { seen[key] = true; out.push({ ip: ip, port: ports[i], phase: phase }); }
+            }
+        }
+        function range(prefix, from, to, phase) {
+            if (!prefix) return;
+            for (var i = from; i <= to; i++) push(prefix + '.' + i, phase);
+        }
+        ports = (ports && ports.length) ? ports : [SCAN_DEFAULT_PORT];
+        extraPrefixes = extraPrefixes || [];
+
+        var lastPref = lastIp ? Util.prefix24(lastIp) : null;
+        if (lastIp && lastPref) {
+            var lo = Util.lastOctet(lastIp);
+            if (lo !== null) range(lastPref, Math.max(1, lo - 10), Math.min(254, lo + 10), 1);
+        }
+        var phase1 = [];
+        if (lastPref)  phase1.push(lastPref);
+        if (ownPrefix && phase1.indexOf(ownPrefix) === -1) phase1.push(ownPrefix);
+        for (var i = 0; i < phase1.length; i++) {
+            var common = [1, 100, 200, 254];
+            for (var j = 0; j < common.length; j++) push(phase1[i] + '.' + common[j], 1);
+        }
+        if (ownPrefix) range(ownPrefix, 1, 254, 2);
+
+        var fallbacks = ['192.168.0', '192.168.1', '10.0.0', '192.168.100'];
+        for (var k = 0; k < extraPrefixes.length; k++) {
+            if (fallbacks.indexOf(extraPrefixes[k]) === -1) fallbacks.push(extraPrefixes[k]);
+        }
+        for (var m = 0; m < fallbacks.length; m++) range(fallbacks[m], 1, 254, 3);
+
+        return out;
+    }
+
+    // ------------------------------------------------------------------------
+    // Probe — GET /health, signature match.
+    // ------------------------------------------------------------------------
+
+    function probe(ip, port, onDone, onReq) {
+        var url = 'http://' + ip + ':' + port + '/health';
+        var r;
+        try { r = new Lampa.Reguest(); }
+        catch (e) { return onDone({ ok: false }); }
+        if (typeof onReq === 'function') onReq(r);
+        try { r.timeout(SCAN_PROBE_TIMEOUT); } catch (e) {}
+        try {
+            r.native(url, function (body) {
+                var s = (typeof body === 'string') ? body : (body == null ? '' : String(body));
+                onDone({ ok: s.indexOf(SCAN_SIGNATURE) >= 0 });
+            }, function () {
+                onDone({ ok: false });
+            }, false, { dataType: 'text' });
+        } catch (e) {
+            onDone({ ok: false });
+        }
+    }
+
+    function saveEndpoint(endpoint) {
+        if (!endpoint) return;
+        try {
+            Lampa.Storage.set(NS + 'endpoint', endpoint);
+            Lampa.Storage.set(LAST_FOUND_KEY, endpoint);
+            diag('endpoint saved:', endpoint);
+            try {
+                var $slot = $('[data-name="' + NS + 'endpoint"]');
+                if ($slot.length) $slot.find('.settings-param__value').text(endpoint);
+            } catch (e) {}
+            try {
+                if (Lampa.Noty && Lampa.Noty.show) {
+                    Lampa.Noty.show(tr('log_collector_lan_saved_noty') + endpoint, { time: 3500 });
+                }
+            } catch (e) {}
+        } catch (e) {
+            diag('saveEndpoint failed:', e && e.message);
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // CSS — injected on first modal open.
+    // ------------------------------------------------------------------------
+
+    function ensureCSS() {
+        if (document.getElementById('log-collector-lan-css')) return;
+        var css =
+            '.log-collector-lan-modal { max-width: 640px; }' +
+            '.log-collector-lan-status { padding: 0.8em 0; color: rgba(255,255,255,0.7); font-size: 0.9em; }' +
+            '.log-collector-lan-list { margin: 0.5em 0; max-height: 50vh; overflow-y: auto; }' +
+            '.log-collector-lan-item { padding: 0.9em 1em; margin: 0.3em 0; background: rgba(255,255,255,0.06); border: 2px solid transparent; border-radius: 0.5em; cursor: pointer; display: flex; align-items: center; justify-content: space-between; outline: none; transition: background 0.1s, border-color 0.1s; }' +
+            '.log-collector-lan-item.focus, .log-collector-lan-item.hover, .log-collector-lan-item:hover { background: #ffb400; border-color: #ffb400; color: #000; }' +
+            '.log-collector-lan-item.focus .log-collector-lan-item-url, .log-collector-lan-item.hover .log-collector-lan-item-url, .log-collector-lan-item:hover .log-collector-lan-item-url { color: #000; }' +
+            '.log-collector-lan-item-url { font-family: monospace; font-size: 1em; color: #fff; }' +
+            '.log-collector-lan-empty { padding: 2em 1em; text-align: center; color: rgba(255,255,255,0.7); }' +
+            '.log-collector-lan-footer { margin-top: 1em; display: flex; gap: 0.5em; }' +
+            '.log-collector-lan-btn { flex: 1; padding: 0.8em; text-align: center; background: rgba(255,255,255,0.08); border: 2px solid transparent; border-radius: 0.5em; cursor: pointer; outline: none; color: #fff; transition: background 0.1s, border-color 0.1s; }' +
+            '.log-collector-lan-btn.focus, .log-collector-lan-btn.hover, .log-collector-lan-btn:hover { background: #ffb400; border-color: #ffb400; color: #000; }' +
+            '.log-collector-lan-spinner { display: inline-block; width: 0.9em; height: 0.9em; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: log-collector-lan-spin 0.9s linear infinite; margin-right: 0.5em; vertical-align: middle; }' +
+            '@keyframes log-collector-lan-spin { to { transform: rotate(360deg); } }';
+        var el = document.createElement('style');
+        el.id = 'log-collector-lan-css';
+        el.textContent = css;
+        document.head.appendChild(el);
+    }
+
+    // ------------------------------------------------------------------------
+    // Modal — live-updating picker.
+    // ------------------------------------------------------------------------
+
+    var ScanModal = {
+        _state: null,
+        isOpen: function () { return !!ScanModal._state; },
+        open: function (opts) {
+            opts = opts || {};
+            if (ScanModal._state) {
+                ScanModal._state.onPick  = opts.onPick  || ScanModal._state.onPick;
+                ScanModal._state.onAbort = opts.onAbort || ScanModal._state.onAbort;
+                ScanModal._state.onRetry = opts.onRetry || ScanModal._state.onRetry;
+                return ScanModal._state;
+            }
+            ensureCSS();
+            var $root   = $('<div class="log-collector-lan-modal"></div>');
+            var $status = $('<div class="log-collector-lan-status"><span class="log-collector-lan-spinner"></span><span class="log-collector-lan-status-text"></span></div>');
+            $status.find('.log-collector-lan-status-text').text(tr('log_collector_lan_status_scanning'));
+            var $list   = $('<div class="log-collector-lan-list"></div>');
+            var $empty  = $('<div class="log-collector-lan-empty" style="display:none;"></div>').text(tr('log_collector_lan_modal_empty'));
+            var $footer = $('<div class="log-collector-lan-footer"></div>');
+            var $retry  = $('<div class="log-collector-lan-btn selector" tabindex="1" style="display:none;"></div>').text(tr('log_collector_lan_modal_retry'));
+            var $cancel = $('<div class="log-collector-lan-btn selector" tabindex="1"></div>').text(tr('log_collector_lan_modal_cancel'));
+            $footer.append($retry).append($cancel);
+            $root.append($status).append($list).append($empty).append($footer);
+
+            var state = {
+                $root: $root, $list: $list, $status: $status,
+                $empty: $empty, $retry: $retry, $cancel: $cancel,
+                seen: {}, count: 0, done: false, closed: false,
+                prevController: null,
+                onPick:  opts.onPick  || function () {},
+                onAbort: opts.onAbort || function () {},
+                onRetry: opts.onRetry || null
+            };
+            ScanModal._state = state;
+
+            try {
+                var m = Lampa.Controller.enabled();
+                state.prevController = m && (m.name || (typeof m === 'string' ? m : null));
+            } catch (e) { state.prevController = null; }
+
+            function doCancel() {
+                if (state.closed) return;
+                ScanModal.close();
+                try { state.onAbort(); } catch (e) { diag('onAbort error:', e && e.message); }
+            }
+            function doRetry() {
+                if (state.closed || !state.onRetry) return;
+                state.done = false; state.count = 0; state.seen = {};
+                $list.empty(); $empty.hide(); $retry.hide();
+                $status.show().find('.log-collector-lan-status-text').text(tr('log_collector_lan_status_scanning'));
+                try { state.onRetry(); } catch (e) { diag('onRetry error:', e && e.message); }
+            }
+            $cancel.on('hover:enter', doCancel).on('click', doCancel);
+            $retry.on('hover:enter', doRetry).on('click', doRetry);
+
+            Lampa.Modal.open({
+                title: tr('log_collector_lan_modal_title'),
+                html:  $root,
+                size:  'medium',
+                mask:  true,
+                onBack: doCancel
+            });
+            Lampa.Controller.add('modal', {
+                invisible: true,
+                toggle: function () {
+                    try {
+                        Lampa.Controller.collectionSet($root);
+                        Lampa.Controller.collectionFocus(false, $root);
+                    } catch (e) {}
+                },
+                update: function () {
+                    try { Lampa.Controller.collectionSet($root); } catch (e) {}
+                },
+                back: doCancel
+            });
+            try { Lampa.Controller.toggle('modal'); } catch (e) {}
+
+            return state;
+        },
+        addResult: function (entry) {
+            var state = ScanModal._state;
+            if (!state || state.closed) return;
+            var url = entry && entry.url;
+            if (!url || state.seen[url]) return;
+            state.seen[url] = true;
+            state.count++;
+
+            var $item = $('<div class="log-collector-lan-item selector" tabindex="1"></div>').attr('data-url', url);
+            $item.append($('<span class="log-collector-lan-item-url"></span>').text(url));
+            function pick() {
+                diag('result picked:', url);
+                try { state.onPick && state.onPick(url); }
+                catch (e) { diag('onPick error:', e && e.message); }
+                ScanModal.close();
+            }
+            $item.on('hover:enter', pick).on('click', pick);
+            state.$list.append($item);
+
+            try {
+                if (state.count === 1) {
+                    Lampa.Controller.collectionSet(state.$root);
+                    Lampa.Controller.collectionFocus($item[0], state.$root);
+                } else {
+                    Lampa.Controller.collectionSet(state.$root);
+                }
+            } catch (e) {}
+        },
+        setDone: function (opts) {
+            var state = ScanModal._state;
+            if (!state || state.closed) return;
+            state.done = true;
+            state.$status.hide();
+            if (state.count === 0 && !(opts && opts.cancelled)) {
+                state.$empty.show();
+                if (state.onRetry) {
+                    state.$retry.show();
+                    try {
+                        Lampa.Controller.collectionSet(state.$root);
+                        Lampa.Controller.collectionFocus(state.$retry[0], state.$root);
+                    } catch (e) {}
+                }
+            } else if (state.count > 0) {
+                state.$status.show();
+                state.$status.find('.log-collector-lan-status-text').text(tr('log_collector_lan_status_done') + state.count);
+                state.$status.find('.log-collector-lan-spinner').hide();
+            }
+        },
+        close: function () {
+            var state = ScanModal._state;
+            if (!state || state.closed) return;
+            state.closed = true;
+            ScanModal._state = null;
+            try { Lampa.Modal.close(); } catch (e) {}
+            try {
+                if (state.prevController) Lampa.Controller.toggle(state.prevController);
+                else Lampa.Controller.toggle('content');
+            } catch (e) {}
+        }
+    };
+
+    // ------------------------------------------------------------------------
+    // Scanner — builds candidates, runs a bounded pool of probes, feeds modal.
+    // ------------------------------------------------------------------------
+
+    var Scanner = {
+        _scanning: false,
+        _aborted:  false,
+        _reqs:     [],
+        start: function (source) {
+            if (Scanner._scanning) { diag('scan in progress, ignoring trigger from', source); return; }
+            if (!(window.Lampa && Lampa.Reguest && Lampa.Modal && Lampa.Controller)) {
+                diag('Lampa not ready for scan');
+                return;
+            }
+            Scanner._scanning = true;
+            Scanner._aborted  = false;
+            Scanner._reqs     = [];
+            diag('scan started (source=' + source + ')');
+            ScanModal.open({
+                onPick:  function (url) { Scanner.abort(); saveEndpoint(url); },
+                onAbort: function () { Scanner.abort(); },
+                onRetry: function () { Scanner._aborted = false; Scanner._reqs = []; Scanner._run(); }
+            });
+            Scanner._run();
+        },
+        _run: function () {
+            var last = (Lampa.Storage.get(LAST_FOUND_KEY, '') || '').toString();
+            var lastIp = Util.ipFromUrl(last);
+            var ports  = Util.parsePortsCSV(Lampa.Storage.field(PORTS_KEY) || '') ;
+            if (!ports.length) ports = [SCAN_DEFAULT_PORT];
+            var extras = Util.parseSubnetsCSV(Lampa.Storage.field(SUBNETS_KEY) || '');
+
+            LocalIP.getLocalPrefix(function (prefix) {
+                if (Scanner._aborted) return;
+                var cands = buildCandidates(lastIp, prefix, extras, ports);
+                diag('candidates:', cands.length, 'prefix:', prefix, 'lastIp:', lastIp);
+                var concurrency = 8;
+                try {
+                    if (Lampa.Platform && Lampa.Platform.screen && Lampa.Platform.screen() === 'tv') concurrency = 4;
+                } catch (e) {}
+                Scanner._pool(cands, concurrency,
+                    function (cand, res) {
+                        if (Scanner._aborted || !res || !res.ok) return;
+                        ScanModal.addResult({ url: 'http://' + cand.ip + ':' + cand.port });
+                    },
+                    function () {
+                        var cancelled = Scanner._aborted;
+                        Scanner._scanning = false;
+                        Scanner._reqs = [];
+                        if (!cancelled) ScanModal.setDone({ cancelled: false });
+                        diag('scan finished (cancelled=' + cancelled + ')');
+                    }
+                );
+            });
+        },
+        _pool: function (cands, limit, onFound, onDone) {
+            if (!cands.length) return onDone();
+            var idx = 0, inflight = 0, finished = false;
+            function next() {
+                if (finished) return;
+                if (Scanner._aborted) {
+                    if (inflight === 0) { finished = true; onDone(); }
+                    return;
+                }
+                while (inflight < limit && idx < cands.length) {
+                    var cand = cands[idx++]; inflight++;
+                    (function (c) {
+                        probe(c.ip, c.port, function (res) {
+                            inflight--;
+                            try { onFound(c, res); } catch (e) { diag('onFound error:', e && e.message); }
+                            if (Scanner._aborted && inflight === 0) {
+                                if (!finished) { finished = true; onDone(); }
+                                return;
+                            }
+                            if (idx >= cands.length && inflight === 0 && !finished) {
+                                finished = true; onDone();
+                                return;
+                            }
+                            next();
+                        }, function (r) { Scanner._reqs.push(r); });
+                    })(cand);
+                }
+                if (idx >= cands.length && inflight === 0 && !finished) {
+                    finished = true; onDone();
+                }
+            }
+            next();
+        },
+        abort: function () {
+            if (!Scanner._scanning && !Scanner._reqs.length) return;
+            Scanner._aborted = true;
+            for (var i = 0; i < Scanner._reqs.length; i++) {
+                try { Scanner._reqs[i].clear(); } catch (e) {}
+            }
+            Scanner._reqs = [];
+            Scanner._scanning = false;
+            diag('scan aborted');
+        }
+    };
+
+    // ========================================================================
     // Lampa-dependent init (settings, request_error hook, flush timer)
     // ========================================================================
 
@@ -295,7 +796,22 @@
                 log_collector_ping:         { ru: 'Тест (отправить тест-запись)', en: 'Test (send a probe entry)' },
                 log_collector_ping_desc:    { ru: 'Пишет тестовую запись в логи ПК', en: 'Writes a probe entry to the PC log' },
                 log_collector_on_toast:     { ru: 'Сборщик логов ВКЛ',            en: 'Log collector ON' },
-                log_collector_off_toast:    { ru: 'Сборщик логов ВЫКЛ',           en: 'Log collector OFF' }
+                log_collector_off_toast:    { ru: 'Сборщик логов ВЫКЛ',           en: 'Log collector OFF' },
+
+                log_collector_lan_scan:            { ru: 'Найти log-server в сети',     en: 'Find log-server on network' },
+                log_collector_lan_scan_desc:       { ru: 'Сканирует локальную сеть и предлагает найденные адреса', en: 'Scans the LAN and offers discovered endpoints' },
+                log_collector_lan_ports:           { ru: 'Порты log-server',            en: 'log-server ports' },
+                log_collector_lan_ports_desc:      { ru: 'Через запятую. По умолчанию: 9999', en: 'Comma-separated list. Default: 9999' },
+                log_collector_lan_subnets:         { ru: 'Доп. подсети /24',             en: 'Extra /24 subnets' },
+                log_collector_lan_subnets_desc:    { ru: 'Первые 3 октета через запятую. Пример: 192.168.50,10.1.1', en: 'First 3 octets, comma-separated. Example: 192.168.50,10.1.1' },
+
+                log_collector_lan_modal_title:     { ru: 'Найденные log-server',         en: 'Found log-servers' },
+                log_collector_lan_modal_empty:     { ru: 'Серверы не найдены',           en: 'No servers found' },
+                log_collector_lan_modal_retry:     { ru: 'Повторить',                    en: 'Retry' },
+                log_collector_lan_modal_cancel:    { ru: 'Отмена',                       en: 'Cancel' },
+                log_collector_lan_status_scanning: { ru: 'Сканирование сети…',           en: 'Scanning network…' },
+                log_collector_lan_status_done:     { ru: 'Найдено серверов: ',           en: 'Servers found: ' },
+                log_collector_lan_saved_noty:      { ru: 'log-server сохранён: ',        en: 'log-server saved: ' }
             });
         } catch (e) {}
     }
@@ -308,6 +824,20 @@
                 icon: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
                         '<path d="M4 6H20M4 12H20M4 18H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
                       '</svg>'
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: 'log_collector',
+                param: { name: NS + 'scan', type: 'button' },
+                field: {
+                    name:        Lampa.Lang.translate('log_collector_lan_scan'),
+                    description: Lampa.Lang.translate('log_collector_lan_scan_desc')
+                },
+                onChange: function () { Scanner.start('settings'); },
+                onRender: function ($el) {
+                    try { $el.on('hover:enter', function () { Scanner.start('settings'); }); }
+                    catch (e) {}
+                }
             });
 
             Lampa.SettingsApi.addParam({
@@ -333,6 +863,24 @@
                 field: {
                     name:        Lampa.Lang.translate('log_collector_endpoint'),
                     description: Lampa.Lang.translate('log_collector_endpoint_desc')
+                }
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: 'log_collector',
+                param: { name: PORTS_KEY, type: 'input', default: '9999' },
+                field: {
+                    name:        Lampa.Lang.translate('log_collector_lan_ports'),
+                    description: Lampa.Lang.translate('log_collector_lan_ports_desc')
+                }
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: 'log_collector',
+                param: { name: SUBNETS_KEY, type: 'input', default: '' },
+                field: {
+                    name:        Lampa.Lang.translate('log_collector_lan_subnets'),
+                    description: Lampa.Lang.translate('log_collector_lan_subnets_desc')
                 }
             });
 
