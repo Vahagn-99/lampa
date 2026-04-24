@@ -790,6 +790,52 @@
         }
     };
 
+    // ------------------------------------------------------------------------
+    // EndpointStatus — colored dot next to the Endpoint input:
+    //   no class → hidden     (empty endpoint)
+    //   .wait    → gray       (checking)
+    //   .active  → green      (reachable, signature matched)
+    //   .error   → red        (unreachable or wrong signature)
+    // Mirrors the visual pattern of services/torrserver.js.
+    // ------------------------------------------------------------------------
+
+    var EndpointStatus = {
+        _req: null,
+        _$dot: function () {
+            try { return $('[data-name="' + NS + 'endpoint"]').find('.settings-param__status'); }
+            catch (e) { return $(); }
+        },
+        _set: function (cls) {
+            var $d = EndpointStatus._$dot();
+            if (!$d.length) return;
+            $d.removeClass('wait active error');
+            if (cls) $d.addClass(cls);
+        },
+        check: function () {
+            var ep = storageEndpoint();
+            if (!ep) { EndpointStatus._set(''); return; }
+            EndpointStatus._set('wait');
+
+            var url = ep + '/health';
+            try { if (EndpointStatus._req) EndpointStatus._req.clear(); } catch (e) {}
+            var r;
+            try { r = new Lampa.Reguest(); }
+            catch (e) { EndpointStatus._set('error'); return; }
+            EndpointStatus._req = r;
+            try { r.timeout(3000); } catch (e) {}
+            try {
+                r.native(url, function (body) {
+                    var s = (typeof body === 'string') ? body : (body == null ? '' : String(body));
+                    EndpointStatus._set(s.indexOf(SCAN_SIGNATURE) >= 0 ? 'active' : 'error');
+                }, function () {
+                    EndpointStatus._set('error');
+                }, false, { dataType: 'text' });
+            } catch (e) {
+                EndpointStatus._set('error');
+            }
+        }
+    };
+
     // ========================================================================
     // Lampa-dependent init (settings, request_error hook, flush timer)
     // ========================================================================
@@ -823,10 +869,6 @@
 
                 log_collector_lan_scan:            { ru: 'Найти log-server в сети',     en: 'Find log-server on network' },
                 log_collector_lan_scan_desc:       { ru: 'Сканирует локальную сеть и предлагает найденные адреса', en: 'Scans the LAN and offers discovered endpoints' },
-                log_collector_lan_ports:           { ru: 'Порты log-server',            en: 'log-server ports' },
-                log_collector_lan_ports_desc:      { ru: 'Через запятую. По умолчанию: 9999', en: 'Comma-separated list. Default: 9999' },
-                log_collector_lan_subnets:         { ru: 'Доп. подсети /24',             en: 'Extra /24 subnets' },
-                log_collector_lan_subnets_desc:    { ru: 'Первые 3 октета через запятую. Пример: 192.168.50,10.1.1', en: 'First 3 octets, comma-separated. Example: 192.168.50,10.1.1' },
 
                 log_collector_lan_modal_title:     { ru: 'Найденные log-server',         en: 'Found log-servers' },
                 log_collector_lan_modal_empty:     { ru: 'Серверы не найдены',           en: 'No servers found' },
@@ -849,22 +891,20 @@
                       '</svg>'
             });
 
-            Lampa.SettingsApi.addParam({
-                component: 'log_collector',
-                param: { name: NS + 'scan', type: 'button' },
-                field: {
-                    name:        Lampa.Lang.translate('log_collector_lan_scan'),
-                    description: Lampa.Lang.translate('log_collector_lan_scan_desc')
-                },
-                onChange: function () { Scanner.start('settings'); }
-            });
-
+            // "enabled" is the gate: when OFF, the rest of the subscreen
+            // is hidden via Lampa's built-in parent/children visibility.
+            // data-children-value="true" means children visible only when
+            // the stringified storage value equals "true".
             Lampa.SettingsApi.addParam({
                 component: 'log_collector',
                 param: { name: NS + 'enabled', type: 'trigger', default: false },
                 field: {
                     name:        Lampa.Lang.translate('log_collector_enabled'),
                     description: Lampa.Lang.translate('log_collector_enabled_desc')
+                },
+                onRender: function ($item) {
+                    try { $item.attr({ 'data-children': 'log_collector_opts', 'data-children-value': 'true' }); }
+                    catch (e) {}
                 },
                 onChange: function (value) {
                     try {
@@ -874,6 +914,19 @@
                         ));
                     } catch (e) {}
                 }
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: 'log_collector',
+                param: { name: NS + 'scan', type: 'button' },
+                field: {
+                    name:        Lampa.Lang.translate('log_collector_lan_scan'),
+                    description: Lampa.Lang.translate('log_collector_lan_scan_desc')
+                },
+                onRender: function ($item) {
+                    try { $item.attr('data-parent', 'log_collector_opts'); } catch (e) {}
+                },
+                onChange: function () { Scanner.start('settings'); }
             });
 
             // NB: `values: ''` is a load-bearing quirk. Lampa's update() does
@@ -887,25 +940,16 @@
                 field: {
                     name:        Lampa.Lang.translate('log_collector_endpoint'),
                     description: Lampa.Lang.translate('log_collector_endpoint_desc')
-                }
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: 'log_collector',
-                param: { name: PORTS_KEY, type: 'input', values: '', default: '9999' },
-                field: {
-                    name:        Lampa.Lang.translate('log_collector_lan_ports'),
-                    description: Lampa.Lang.translate('log_collector_lan_ports_desc')
-                }
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: 'log_collector',
-                param: { name: SUBNETS_KEY, type: 'input', values: '', default: '' },
-                field: {
-                    name:        Lampa.Lang.translate('log_collector_lan_subnets'),
-                    description: Lampa.Lang.translate('log_collector_lan_subnets_desc')
-                }
+                },
+                onRender: function ($item) {
+                    try {
+                        $item.attr('data-parent', 'log_collector_opts');
+                        if (!$item.find('.settings-param__status').length) {
+                            $item.append('<div class="settings-param__status"></div>');
+                        }
+                    } catch (e) {}
+                },
+                onChange: function () { EndpointStatus.check(); }
             });
 
             Lampa.SettingsApi.addParam({
@@ -914,6 +958,9 @@
                 field: {
                     name:        Lampa.Lang.translate('log_collector_ping'),
                     description: Lampa.Lang.translate('log_collector_ping_desc')
+                },
+                onRender: function ($item) {
+                    try { $item.attr('data-parent', 'log_collector_opts'); } catch (e) {}
                 },
                 onChange: function () {
                     try {
@@ -932,6 +979,27 @@
         } catch (e) {}
     }
 
+    function hookEndpointStatus() {
+        try {
+            // Re-check when the endpoint changes (either user typed it in or
+            // the scanner wrote it after a LAN probe).
+            if (Lampa.Storage.listener && Lampa.Storage.listener.follow) {
+                Lampa.Storage.listener.follow('change', function (e) {
+                    if (e && e.name === NS + 'endpoint') EndpointStatus.check();
+                });
+            }
+            // Probe freshly when our settings subscreen opens — so the dot
+            // reflects current reachability even without user action.
+            if (Lampa.Settings && Lampa.Settings.listener && Lampa.Settings.listener.follow) {
+                Lampa.Settings.listener.follow('open', function (e) {
+                    if (e && e.name === 'log_collector') {
+                        setTimeout(function () { EndpointStatus.check(); }, 100);
+                    }
+                });
+            }
+        } catch (e) {}
+    }
+
     function init() {
         if (_initialised) return;
         _initialised = true;
@@ -939,6 +1007,7 @@
         registerLang();
         registerSettings();
         hookLampaErrors();
+        hookEndpointStatus();
         _flushTimer = setInterval(flush, FLUSH_INTERVAL_MS);
     }
 
