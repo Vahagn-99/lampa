@@ -20,8 +20,6 @@
   footer { color: #999; font-size: 13px; margin-top: 48px; }
   a { color: #0b66c3; text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .loading { color: #999; font-style: italic; }
-  .error { color: #b00; }
 </style>
 </head>
 <body>
@@ -31,70 +29,23 @@
   <div class="plugin hero">
     <h2>🛒 My Store — магазин плагинов (рекомендуется)</h2>
     <p>Одна ссылка — полный доступ ко всем плагинам через нативный UI Lampa. Добавляет пункт <em>«Мои плагины»</em> в настройки, открывает встроенный магазин расширений с категориями и install/remove. Автоматически ставит сборщик логов на первом запуске.</p>
-    <code class="url">https://vahagn-99.github.io/lampa/plugins/store.js</code>
+    <code class="url">https://vahagn-99.github.io/lampa/app/store.js</code>
   </div>
 
-  <p class="sub" style="margin-top:32px">Каталог плагинов (автоматически из <code>extensions.json</code>). Можно ставить по одной ссылке или через магазин выше:</p>
+  <!--
+    Карточки плагинов добавляются руками. Шаблон:
 
-  <div id="plugins-list">
-    <p class="loading">Загрузка каталога…</p>
-  </div>
+    <h2 class="cat">Категория</h2>
+    <div class="plugin">
+      <h3>Plugin Name</h3>
+      <p>Короткое описание.</p>
+      <div class="meta">Автор: @vahagn_99 · v0.1.0</div>
+      <code class="url">https://vahagn-99.github.io/lampa/plugins/&lt;name&gt;.js</code>
+    </div>
+  -->
 
   <footer>
-    <p>Автор: <a href="https://t.me/vahagn">@vahagn</a>. Исходники: <a href="https://github.com/vahagn-99/lampa">github.com/vahagn-99/lampa</a>. Реестр: <a href="plugins.yml">plugins.yml</a> → <a href="extensions.json">extensions.json</a>.</p>
+    <p>Автор: <a href="https://t.me/vahagn">@vahagn</a>. Исходники: <a href="https://github.com/vahagn-99/lampa">github.com/vahagn-99/lampa</a>.</p>
   </footer>
-
-<script>
-(function(){
-    function h(tag, attrs, children){
-        var el = document.createElement(tag);
-        if (attrs) for (var k in attrs) {
-            if (k === 'class') el.className = attrs[k];
-            else if (k === 'text') el.textContent = attrs[k];
-            else el.setAttribute(k, attrs[k]);
-        }
-        if (children) children.forEach(function(c){ if (c) el.appendChild(c); });
-        return el;
-    }
-
-    function renderPlugin(p){
-        var card = h('div', { class: 'plugin' });
-        card.appendChild(h('h3', { text: p.name || '—' }));
-        if (p.descr) card.appendChild(h('p', { text: p.descr }));
-
-        var metaParts = [];
-        if (p.author)  metaParts.push('Автор: ' + p.author);
-        if (p.version) metaParts.push('v' + p.version);
-        if (metaParts.length) card.appendChild(h('div', { class: 'meta', text: metaParts.join(' · ') }));
-
-        card.appendChild(h('code', { class: 'url', text: p.link || '' }));
-        return card;
-    }
-
-    function renderCatalog(data){
-        var root = document.getElementById('plugins-list');
-        root.innerHTML = '';
-        var cats = (data && data.results) || [];
-        if (!cats.length) {
-            root.appendChild(h('p', { class: 'loading', text: 'Каталог пуст.' }));
-            return;
-        }
-        cats.forEach(function(cat){
-            root.appendChild(h('h2', { class: 'cat', text: cat.title + ' · ' + ((cat.results || []).length) }));
-            (cat.results || []).forEach(function(p){ root.appendChild(renderPlugin(p)); });
-        });
-    }
-
-    // Cache-bust to force latest JSON on reload.
-    fetch('extensions.json?_=' + Date.now())
-        .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(renderCatalog)
-        .catch(function(e){
-            var root = document.getElementById('plugins-list');
-            root.innerHTML = '';
-            root.appendChild(h('p', { class: 'error', text: 'Не удалось загрузить каталог: ' + (e && e.message ? e.message : e) }));
-        });
-})();
-</script>
 </body>
 </html>

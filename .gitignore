@@ -3,19 +3,23 @@
 node_modules/
 package-lock.json
 
-# Local Lampa source used for plugin testing (see skill: lampa-plugin-browser-testing).
-# Vendored locally so `npm run start` is one directory away — NOT committed.
-lampa-source/
+# Vendored third-party sources (Lampa itself, etc.) — fetched locally per dev,
+# never committed. See scripts/lampa-dev.sh for how it's consumed.
+vendor/
+
+# Local dev storage — saved browser session, any other transient local state.
+storage/
+
+# Personal dev tooling — build scripts, Chrome launcher, puppeteer deps.
+# Not shipped; each dev runs their own.
+scripts/
+.chrome-profile/
 
 # Artifacts from Playwright MCP test runs
 .playwright-mcp/
 
-# Personal Lampa dev-launcher — boots lampa-source + pre-loads localStorage session.
-# Not shipped; each dev runs their own.
-lampa-dev.sh
-scripts/
-dev-session.json
-.chrome-profile/
+# Collected log-server output
+logs/
 
 # Claude Code local tooling (personal)
 .claude/

@@ -14,7 +14,7 @@ LOG_PORT   ?= 9999
 LOG_DIR    ?= logs
 CATALOG    := ./scripts/build-catalog.py
 LOG_SERVER := ./log-server.py
-DEV_LAMPA  := ./lampa-dev.sh
+DEV_LAMPA  := ./scripts/lampa-dev.sh
 
 .DEFAULT_GOAL := help
 
@@ -41,7 +41,7 @@ list: ## Show registered plugins grouped by category
 	@test -x $(CATALOG) || { echo "✗ missing $(CATALOG)"; exit 1; }
 	$(CATALOG) list
 
-lampa: ## Boot local Lampa (needs lampa-source/ + dev-session.json)
+lampa: ## Boot local Lampa (needs vendor/lampa-source/ + storage/dev-session.json)
 	@test -x $(DEV_LAMPA) || { echo "✗ missing $(DEV_LAMPA) (personal dev tool, not tracked)"; exit 1; }
 	$(DEV_LAMPA)
 

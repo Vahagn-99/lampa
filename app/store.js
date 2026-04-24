@@ -27,12 +27,12 @@
     // but they rarely change so hardcoded is fine.
     // ========================================================================
 
-    var CATALOG_URL = 'https://vahagn-99.github.io/lampa/extensions.json';
+    var CATALOG_URL = 'https://vahagn-99.github.io/lampa/app/extensions.json';
 
     // URLs that will be injected into localStorage.plugins on first run if
     // missing. Keep in sync with plugins.yml:auto_install.
     var AUTO_INSTALL = [
-        'https://vahagn-99.github.io/lampa/plugins/log-collector.js'
+        'https://vahagn-99.github.io/lampa/app/plugins/log-collector.js'
     ];
 
     var STORE_COMPONENT = 'vahagn_store';

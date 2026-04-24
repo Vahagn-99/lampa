@@ -11,11 +11,11 @@
 # on first run (so the logger starts collecting from day one), and lets the
 # user browse/install everything else via Lampa's native extensions store UI.
 
-base_url: https://vahagn-99.github.io/lampa/plugins
+base_url: https://vahagn-99.github.io/lampa/app/plugins
 
-# URL Lampa's native store UI (opened by plugins/store.js) fetches at runtime.
+# URL Lampa's native store UI (opened by app/store.js) fetches at runtime.
 # Must match the final location where build-catalog.py writes extensions.json.
-catalog_url: https://vahagn-99.github.io/lampa/extensions.json
+catalog_url: https://vahagn-99.github.io/lampa/app/extensions.json
 
 # Plugins that store.js silently ensures are installed on every Lampa start.
 # Keep this minimal — it's non-opt-in from the user's POV. The logger is the
@@ -91,7 +91,9 @@ plugins:
     category: diagnostics
 
   store:
-    file: store.js
+    # Lives under app/ rather than plugins/, so pin an explicit url and
+    # skip the base_url + file derivation.
+    url: https://vahagn-99.github.io/lampa/app/store.js
     aliases: [marketplace]
     description: Open my plugin store from Lampa settings
     author: "@vahagn_99"
