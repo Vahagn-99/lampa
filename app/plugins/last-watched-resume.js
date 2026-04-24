@@ -50,6 +50,20 @@
     var _captureBound       = false;
     var _activeAutoclick    = null; // current OnlineAutoclick / TorrentAutoclick
 
+    // Pending playback context — fed by activity / torrent_file / Torrent.open
+    // observers, drained by state:changed timeline updates. Cap at 8 entries
+    // and 5-minute TTL — covers user picking a card, browsing, then playing.
+    var _pendingContext     = [];
+    var PENDING_CAP         = 8;
+    var PENDING_TTL_MS      = 5 * 60 * 1000;
+
+    // Dedup short-circuit: if Player.listener('start') already wrote an entry
+    // for a given (card_id, season, episode) within this window, skip the
+    // Timeline-based fallback for the same payload — both signals can fire
+    // for the same playback.
+    var _recentRecord       = { key: '', ts: 0 };
+    var DEDUP_WINDOW_MS     = 30000;
+
     // ========================================================================
     // Logging helpers — single prefix, sub-event in first message word
     // ========================================================================
@@ -208,7 +222,245 @@
             (source.kind === 'online'  ? 'balanser=' + source.balanser :
              source.kind === 'torrent' ? 'hash=' + (source.torrent_hash || '').slice(0, 8) + ' path=' + (source.file_path || '<none>') :
              'other'));
+        markRecorded(entry);
         Store.upsert(entry);
+    }
+
+    function markRecorded(entry) {
+        _recentRecord = {
+            key: entry.card_id + ':' + (entry.season || '-') + ':' + (entry.episode || '-'),
+            ts:  Date.now()
+        };
+    }
+
+    function recentlyRecorded(card_id, season, episode) {
+        if (!_recentRecord.key) return false;
+        if (Date.now() - _recentRecord.ts > DEDUP_WINDOW_MS) return false;
+        var k = card_id + ':' + (season || '-') + ':' + (episode || '-');
+        return k === _recentRecord.key;
+    }
+
+    // ========================================================================
+    // Pending context — fed by activity navigations and Torrent.open patch
+    // ========================================================================
+
+    function pruneContext() {
+        var cutoff = Date.now() - PENDING_TTL_MS;
+        var i;
+        var kept = [];
+        for (i = 0; i < _pendingContext.length; i++) {
+            if (_pendingContext[i].ts >= cutoff) kept.push(_pendingContext[i]);
+        }
+        _pendingContext = kept.slice(0, PENDING_CAP);
+    }
+
+    function rememberContext(card, kind, extra) {
+        if (!card || card.id == null) return;
+        pruneContext();
+        // Drop existing context for the same card_id + kind so the most
+        // recent observation always wins (e.g. user re-opens the same card).
+        var filtered = [];
+        var i;
+        for (i = 0; i < _pendingContext.length; i++) {
+            var p = _pendingContext[i];
+            if (!(p.card.id === card.id && p.kind === kind)) filtered.push(p);
+        }
+        var ctx = {
+            card:         card,
+            kind:         kind,
+            balanser:     extra && extra.balanser     ? extra.balanser     : null,
+            torrent_hash: extra && extra.torrent_hash ? extra.torrent_hash : null,
+            file_path:    extra && extra.file_path    ? extra.file_path    : null,
+            ts:           Date.now()
+        };
+        filtered.unshift(ctx);
+        _pendingContext = filtered.slice(0, PENDING_CAP);
+        log('context:remember',
+            'card_id=' + card.id,
+            'kind=' + kind,
+            (ctx.balanser     ? 'balanser=' + ctx.balanser : ''),
+            (ctx.torrent_hash ? 'hash=' + ctx.torrent_hash.slice(0, 8) : ''),
+            'pending=' + _pendingContext.length);
+    }
+
+    function findContextForHash(hash) {
+        pruneContext();
+        var i;
+        for (i = 0; i < _pendingContext.length; i++) {
+            var p = _pendingContext[i];
+            var hashes = computeCardHashes(p.card);
+            if (hashes.indexOf(String(hash)) !== -1) return p;
+        }
+        return null;
+    }
+
+    // Compute the full set of (movie OR season+episode) hashes Lampa might
+    // produce for a given card — see `vendor/lampa-source/plugins/online/online.js:253`
+    // and `Lampa.Timeline.view` semantics. Series cards expose `seasons` with
+    // `episode_count` per season; movies use just original_title.
+    function computeCardHashes(card) {
+        var out = [];
+        if (!card) return out;
+        var origTitle = card.original_title || card.original_name || '';
+        try { out.push(String(Lampa.Utils.hash(origTitle))); } catch (e) {}
+        // Series — try every season/episode combination from card.seasons
+        var seasons = card.seasons;
+        if (seasons && seasons.length) {
+            var s, e, season, epCount, sep, h;
+            for (s = 0; s < seasons.length; s++) {
+                season = seasons[s].season_number;
+                if (season == null || season === 0) continue; // 0 = Specials
+                epCount = seasons[s].episode_count || 30;
+                sep = season > 10 ? ':' : '';
+                for (e = 1; e <= epCount; e++) {
+                    try { h = Lampa.Utils.hash(season + sep + e + origTitle); }
+                    catch (ex) { continue; }
+                    out.push(String(h));
+                }
+            }
+        }
+        return out;
+    }
+
+    // Given a card and a confirmed hash that matched, figure out which season
+    // and episode produced it. Returns {season, episode} or {season:null, episode:null}
+    // for movies / unknown.
+    function reverseSeasonEpisode(card, hash) {
+        if (!card) return { season: null, episode: null };
+        var origTitle = card.original_title || card.original_name || '';
+        var seasons = card.seasons;
+        if (!seasons || !seasons.length) return { season: null, episode: null };
+        var s, e, season, epCount, sep, h;
+        var target = String(hash);
+        for (s = 0; s < seasons.length; s++) {
+            season = seasons[s].season_number;
+            if (season == null || season === 0) continue;
+            epCount = seasons[s].episode_count || 30;
+            sep = season > 10 ? ':' : '';
+            for (e = 1; e <= epCount; e++) {
+                try { h = Lampa.Utils.hash(season + sep + e + origTitle); }
+                catch (ex) { continue; }
+                if (String(h) === target) return { season: season, episode: e };
+            }
+        }
+        return { season: null, episode: null };
+    }
+
+    function onActivity(e) {
+        try {
+            if (!e || !e.object || !e.object.activity) return;
+            var act = e.object.activity;
+            var card = act.movie || act.card;
+            if (!card || card.id == null) return;
+            if (act.component === 'online') {
+                // Lampa stores last balanser under 'online_last_balanser';
+                // older builds use 'online_balanser'. Try both.
+                var bal = '';
+                try { bal = Lampa.Storage.get('online_last_balanser', '') || ''; } catch (ex) {}
+                if (!bal) {
+                    try { bal = Lampa.Storage.get('online_balanser', '') || ''; } catch (ex) {}
+                }
+                rememberContext(card, 'online', { balanser: bal });
+            } else if (act.component === 'torrents') {
+                // Card opened the torrent search list — remember as torrent
+                // candidate; we'll narrow torrent_hash + file_path later via
+                // Torrent.open patch + torrent_file listener.
+                rememberContext(card, 'torrent', {});
+            }
+        } catch (ex) { warn('activity', 'fail', ex && ex.message); }
+    }
+
+    // Monkey-patch Lampa.Torrent.open(hash, card) to capture torrent context
+    // BEFORE the file picker even renders. Restore the original on next init
+    // (idempotent — guard prevents double-wrap).
+    var _origTorrentOpen = null;
+    function patchTorrentOpen() {
+        try {
+            if (!Lampa.Torrent || typeof Lampa.Torrent.open !== 'function') return;
+            if (Lampa.Torrent.open.__lwr_patched) return;
+            _origTorrentOpen = Lampa.Torrent.open;
+            Lampa.Torrent.open = function (hash, card) {
+                try {
+                    if (card && card.id != null) {
+                        rememberContext(card, 'torrent', { torrent_hash: hash });
+                    }
+                } catch (ex) {}
+                return _origTorrentOpen.apply(this, arguments);
+            };
+            Lampa.Torrent.open.__lwr_patched = true;
+        } catch (ex) { warn('patch', 'Torrent.open fail', ex && ex.message); }
+    }
+
+    // Capture the file path from the torrent picker — this fires when the
+    // user actually selects a file, before playback begins. Updates the
+    // most recent torrent context with the chosen path.
+    function onTorrentFile(e) {
+        try {
+            if (!e || e.type !== 'onenter') return;
+            if (!e.element || !e.element.path) return;
+            // Patch the most recent torrent-kind context's file_path.
+            var i;
+            for (i = 0; i < _pendingContext.length; i++) {
+                if (_pendingContext[i].kind === 'torrent') {
+                    _pendingContext[i].file_path = e.element.path;
+                    if (e.element.torrent_hash && !_pendingContext[i].torrent_hash) {
+                        _pendingContext[i].torrent_hash = e.element.torrent_hash;
+                    }
+                    log('context:torrent_file',
+                        'card_id=' + _pendingContext[i].card.id,
+                        'path=' + e.element.path);
+                    break;
+                }
+            }
+        } catch (ex) { warn('torrent_file', 'fail', ex && ex.message); }
+    }
+
+    function onStateChanged(e) {
+        try {
+            if (!e || e.target !== 'timeline' || e.reason !== 'update') return;
+            if (!e.data || e.data.hash == null) return;
+            var hash = e.data.hash;
+            var ctx  = findContextForHash(hash);
+            if (!ctx) {
+                // No matching context — most likely a timeline sync from
+                // server, not local playback. Skip silently.
+                return;
+            }
+            var se = reverseSeasonEpisode(ctx.card, hash);
+            if (recentlyRecorded(ctx.card.id, se.season, se.episode)) {
+                // Player.listener already wrote this — don't double-record.
+                return;
+            }
+            var source;
+            if (ctx.kind === 'torrent') {
+                source = {
+                    kind:         'torrent',
+                    torrent_hash: ctx.torrent_hash || '',
+                    file_path:    ctx.file_path    || ''
+                };
+            } else if (ctx.kind === 'online') {
+                source = { kind: 'online', balanser: ctx.balanser || '' };
+            } else {
+                source = { kind: 'other' };
+            }
+            var entry = {
+                card_id:  ctx.card.id,
+                season:   se.season,
+                episode:  se.episode,
+                source:   source,
+                saved_at: Date.now()
+            };
+            log('player:start',
+                'evt=timeline',
+                'card_id=' + entry.card_id,
+                'S' + (entry.season || '-') + 'E' + (entry.episode || '-'),
+                'kind=' + source.kind,
+                (source.kind === 'online'  ? 'balanser=' + source.balanser :
+                 source.kind === 'torrent' ? 'hash=' + (source.torrent_hash || '').slice(0, 8) + ' path=' + (source.file_path || '<none>') :
+                 'other'));
+            markRecorded(entry);
+            Store.upsert(entry);
+        } catch (ex) { warn('state:changed', 'fail', ex && ex.message); }
     }
 
     // ========================================================================
@@ -782,15 +1034,36 @@
         registerSettings();
         registerRow();
 
-        // Subscribe to BOTH 'start' (inner Lampa player) and 'external'
-        // (native Tizen AVPlay / WebOS / Android / iOS handoff). On Tizen,
-        // torrent playback often routes via the native player and Lampa
-        // emits 'external' instead of 'start' — without this, recording is
-        // silently a no-op for half the user base.
+        // Three-layer recording strategy:
+        //
+        //   1. Player.listener('start' / 'external') — the OBVIOUS path,
+        //      works on most setups, fastest signal. Some Tizen / native-
+        //      player paths bypass it entirely (observed empirically).
+        //
+        //   2. Lampa.Listener('state:changed' target=timeline reason=update) —
+        //      fires from Lampa.Timeline.update which is called by EVERY
+        //      playback path (this is what powers Lampa's own continue-
+        //      watching). Universal but only gives us a hash — we have to
+        //      reverse-lookup the card via pending-context tracking.
+        //
+        //   3. Activity / Torrent.open observers — feed the pending-context
+        //      cache so layer 2 can map hash → (card, source).
+        //
+        // Layer 1 is the fast path; layer 2 is the safety net. Both record
+        // through the same dedup window so we never write twice for one
+        // playback.
         try { Lampa.Player.listener.follow('start',    function (d) { onPlayerStart(d, 'start'); }); }
         catch (e) { err('init', "Player.listener.follow('start') fail", e && e.message); }
         try { Lampa.Player.listener.follow('external', function (d) { onPlayerStart(d, 'external'); }); }
         catch (e) { err('init', "Player.listener.follow('external') fail", e && e.message); }
+
+        try { Lampa.Listener.follow('state:changed', onStateChanged); }
+        catch (e) { err('init', "Listener.follow('state:changed') fail", e && e.message); }
+        try { Lampa.Listener.follow('activity', onActivity); }
+        catch (e) { err('init', "Listener.follow('activity') fail", e && e.message); }
+        try { Lampa.Listener.follow('torrent_file', onTorrentFile); }
+        catch (e) { err('init', "Listener.follow('torrent_file') fail", e && e.message); }
+        patchTorrentOpen();
 
         bindCaptureHandlers();
 
