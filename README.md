@@ -39,7 +39,8 @@ config/
 storage/
 ├── extensions.json       # сгенерированный каталог для Lampa (make catalog)
 ├── .gitignore            # игнор только локальных файлов в storage/
-└── dev-session.json      # [gitignored] локальный Chrome-session snapshot
+├── dev-session.json      # [gitignored] локальный Chrome-session snapshot
+└── logs/                 # [gitignored] вывод log-server.py (make logs)
 
 log-server.py             # dev-сервер для сбора логов с ТВ (stdlib Python)
 index.html                # статический лендинг
@@ -47,7 +48,7 @@ Makefile                  # дев-команды (см. `make help`)
 README.md
 ```
 
-Личный дев-инструментарий (gitignored): `scripts/` (`build-catalog.py`, `lampa-dev.sh`, `inject-session.mjs`), `vendor/lampa-source/`, `.chrome-profile/`, `.claude/`, `openspec/`, `CLAUDE.md`. Внутри `storage/` локальный `dev-session.json` игнорится через `storage/.gitignore`.
+Личный дев-инструментарий (gitignored): `scripts/` (`build-catalog.py`, `lampa-dev.sh`, `inject-session.mjs`), `vendor/lampa-source/`, `.chrome-profile/`, `.claude/`, `openspec/`, `CLAUDE.md`. Внутри `storage/` локальные `dev-session.json` и `logs/` игнорятся через `storage/.gitignore`.
 
 ## Добавить новый плагин
 
@@ -66,7 +67,7 @@ make logs            # HTTP на :9999, логи в ./logs
 make logs-tls        # HTTPS с самоподписанным сертом (если Lampa по HTTPS)
 ```
 
-На ТВ: _Настройки → Сборщик логов_ → включить, вставить выведенный URL. Файлы: `./logs/<prefix>/YYYY-MM-DD.log` + объединённый `all-YYYY-MM-DD.log`.
+На ТВ: _Настройки → Сборщик логов_ → включить, вставить выведенный URL. Файлы: `./storage/logs/<prefix>/YYYY-MM-DD.log` + объединённый `all-YYYY-MM-DD.log`.
 
 ## Разработка
 

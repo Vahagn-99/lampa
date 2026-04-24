@@ -11,7 +11,7 @@
 
 PY         ?= python3
 LOG_PORT   ?= 9999
-LOG_DIR    ?= logs
+LOG_DIR    ?= storage/logs
 CATALOG    := ./scripts/build-catalog.py
 LOG_SERVER := ./log-server.py
 DEV_LAMPA  := ./scripts/lampa-dev.sh

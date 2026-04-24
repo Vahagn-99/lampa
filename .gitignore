@@ -18,9 +18,6 @@ scripts/
 # Artifacts from Playwright MCP test runs
 .playwright-mcp/
 
-# Collected log-server output
-logs/
-
 # Claude Code local tooling (personal)
 .claude/
 CLAUDE.md

@@ -1,2 +1,5 @@
 # Local-only dev state. Keep the rest of storage/ tracked.
 dev-session.json
+
+# Collected log-server output (per-plugin / per-day files).
+logs/
