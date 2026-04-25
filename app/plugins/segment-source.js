@@ -35,21 +35,21 @@
     var Const = {
         LOG_PREFIX:          "[SegmentSource]",
         MIN_APP_DIGITAL:     300,                       /* Lampa 3.0.0 introduces the segments engine */
-        HEAD_RANGE_BYTES:    16 * 1024 * 1024,          /* covers ~3 min of cluster data — enough for recap detection from subs */
+        HEAD_RANGE_BYTES:    24 * 1024 * 1024,          /* covers ~4-5 min of cluster data — enough to see post-intro episode body subs */
         SAFETY_BYTES:        64 * 1024 * 1024,          /* abort if server ignored Range and floods past this */
-        FETCH_TIMEOUT_MS:    15000,                     /* 16 MB over LAN: ~1-2s; over Wi-Fi/router: ~5-10s; 15s gives slack for slow links */
+        FETCH_TIMEOUT_MS:    22000,                     /* 24 MB over Wi-Fi: ~5-15s; 22s gives slack for slow links */
         API_TIMEOUT_MS:      5000,
         CACHE_TTL_MS:        30 * 24 * 3600 * 1000,     /* 30 days */
         CACHE_PREFIX:        "segsrc_ch_",              /* schema: { segments: [{start,end}], _ts: ms } */
         INTRODB_URL:         "https://api.theintrodb.org/v2/media",
 
         /* Subtitle-tier heuristics */
-        SUB_SCAN_HORIZON_S:  240,                       /* ignore subs past 4 min of episode time */
+        SUB_SCAN_HORIZON_S:  300,                       /* ignore subs past 5 min of episode time */
         SUB_RECAP_REGEX:     /(previously\s+on|в\s+предыдущ|ранее\s+в\b|story\s+so\s+far|в\s+прошл[ыо][хм]\s+сери)/i,
-        SUB_DENSE_GAP_S:     5,                         /* recap is "dense" — gaps < 5s between lines */
+        SUB_DENSE_GAP_S:     15,                        /* recap can have internal cuts of 5-15s between clips */
         SUB_RECAP_MIN_S:     5,
-        SUB_RECAP_MAX_S:     120,
-        SUB_INTRO_GAP_MIN_S: 20,                        /* a quiet stretch ≥ 20s after recap = likely opening */
+        SUB_RECAP_MAX_S:     180,                       /* full recap+intro merge can run up to 3 min */
+        SUB_INTRO_GAP_MIN_S: 20,                        /* a quiet stretch ≥ 20s after recap = likely opening credits */
         SUB_INTRO_GAP_MAX_S: 120,
         SUB_INTRO_BEFORE_S:  180                        /* intro must start within first 3 min */
     };
@@ -763,16 +763,55 @@
      * ================================================================== */
 
     var SubtitleHeuristic = (function () {
+        /* Recap detection — anchored on a sub matching the recap regex.
+         *
+         * Walks forward through samples while the gap to the next sample is
+         * "dense" (< SUB_DENSE_GAP_S). Western-TV recaps are clip montages
+         * with internal cuts of 5-15s, so the threshold has to tolerate
+         * those gaps without breaking the block.
+         *
+         * After the dense block ends, we check the very next sample. If the
+         * gap to it is in INTRO range (20-120s, signature of the opening
+         * theme that has no dialogue), we extend the recap segment THROUGH
+         * the intro silence to the start of the first episode-body line —
+         * one combined skip rather than two adjacent ones. This also
+         * correctly handles shows where the recap-then-credits flow has no
+         * gap between them (some Netflix series).
+         *
+         * If we ran out of samples (likely intro extends past our fetched
+         * window), we extend by a fixed conservative amount so the user
+         * doesn't watch the opening theme in full. */
         function detectRecap(samples) {
             for (var i = 0; i < samples.length; i++) {
                 if (!Const.SUB_RECAP_REGEX.test(samples[i].text)) continue;
                 var startSec = Math.max(0, samples[i].time - 2);
                 var lastDense = samples[i].time;
+                var lastDenseIdx = i;
                 for (var j = i + 1; j < samples.length; j++) {
                     if (samples[j].time - lastDense > Const.SUB_DENSE_GAP_S) break;
                     lastDense = samples[j].time;
+                    lastDenseIdx = j;
                 }
                 var endSec = lastDense + 3;
+                var nextIdx = lastDenseIdx + 1;
+                if (nextIdx < samples.length) {
+                    /* There IS a sample past the dense block — check the gap. */
+                    var nextSample = samples[nextIdx];
+                    var introGap = nextSample.time - lastDense;
+                    if (introGap >= Const.SUB_INTRO_GAP_MIN_S
+                        && introGap <= Const.SUB_INTRO_GAP_MAX_S
+                        && nextSample.time <= Const.SUB_INTRO_BEFORE_S + lastDense) {
+                        /* Opening theme between recap and episode body — merge. */
+                        endSec = Math.max(endSec, nextSample.time - 1);
+                    }
+                } else if (lastDense < 90) {
+                    /* No more samples in our window AND dense block ended in the
+                     * first 90s of the episode — opening theme almost certainly
+                     * extends past our fetched bytes. Extend by a conservative
+                     * 60s to cover a typical opening sequence. The Skipper's
+                     * Math.min(seg.end, video.duration) clamp keeps it bounded. */
+                    endSec = lastDense + 60;
+                }
                 var dur = endSec - startSec;
                 if (dur < Const.SUB_RECAP_MIN_S || dur > Const.SUB_RECAP_MAX_S) return null;
                 return { start: startSec, end: endSec, type: "recap" };
@@ -780,6 +819,9 @@
             return null;
         }
 
+        /* Standalone intro — for shows that open with a cold-open + opening
+         * theme (no recap). Looks for a 20-120s subtitle-free gap within
+         * the first 3 minutes. Skipped when recap already merged the intro. */
         function detectIntro(samples, afterSec) {
             if (!samples.length) return null;
             var lastTime = afterSec || 0;
@@ -800,8 +842,13 @@
         function classify(samples) {
             var out = [];
             var recap = detectRecap(samples);
-            if (recap) out.push(recap);
-            var intro = detectIntro(samples, recap ? recap.end : 0);
+            if (recap) {
+                out.push(recap);
+                /* Recap already absorbs the opening — don't add a second
+                 * intro segment that would just overlap. */
+                return out;
+            }
+            var intro = detectIntro(samples, 0);
             if (intro) out.push(intro);
             return out;
         }
