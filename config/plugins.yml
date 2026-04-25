@@ -51,13 +51,14 @@ categories:
 
 plugins:
 
-  autoskip:
-    file: autoskip.js
-    aliases: [skip, skip-intro]
-    display_name: Автопропуск
-    description: Пропуск заставок, титров, обзоров прошлых серий и превью следующих
+  segment-source:
+    file: segment-source.js
+    aliases: [segments, segment, autoskip, skip, skip-intro]
+    display_name: Источник сегментов
+    description: Тайм-коды интро / recap / титров для штатного автопропуска Lampa. Читает MKV-чаптеры из TorrServe; fallback на TheIntroDB. Настройка — в плеере, меню «Сегменты»
     author: "@vahagn_99"
     category: mine
+    version: "2.0.0"
 
   last-watched-resume:
     file: last-watched-resume.js

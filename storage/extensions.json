@@ -6,11 +6,12 @@
       "title": "Мои плагины",
       "results": [
         {
-          "name": "Автопропуск",
-          "descr": "Пропуск заставок, титров, обзоров прошлых серий и превью следующих",
-          "link": "https://vahagn-99.github.io/lampa/app/plugins/autoskip.js",
+          "name": "Источник сегментов",
+          "descr": "Тайм-коды интро / recap / титров для штатного автопропуска Lampa. Читает MKV-чаптеры из TorrServe; fallback на TheIntroDB. Настройка — в плеере, меню «Сегменты»",
+          "link": "https://vahagn-99.github.io/lampa/app/plugins/segment-source.js",
           "author": "@vahagn_99",
-          "available_lampa": 1
+          "available_lampa": 1,
+          "version": "2.0.0"
         },
         {
           "name": "Продолжить просмотр",
