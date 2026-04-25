@@ -1100,6 +1100,85 @@
      * with TTL so we don't retry every play of an episode that has no data.
      * ================================================================== */
 
+    /* ====================================================================
+     * Skipper  —  fallback time-based seek for non-HTML5 players
+     *
+     * Lampa core wires the segments engine via the DOM `'timeupdate'` event
+     * on the <video> element (vendor/lampa-source/src/interaction/player/
+     * video.js:284). Tizen / WebOS / Orsay players use native objects
+     * (avplay, etc.) that don't dispatch DOM events — they fan out via
+     * Lampa.PlayerVideo.listener instead. Result: native auto-skip never
+     * fires for those players, even with `player_segments_skip = "auto"`.
+     *
+     * We work around this in-plugin by subscribing to the universal
+     * Lampa.PlayerVideo.listener('timeupdate') event and doing the seek
+     * ourselves. This is fully idempotent with Lampa core's own skipper:
+     * on HTML5 both fire, both seek to segment.end, second one is a no-op.
+     *
+     * The toggle still lives in the native menu — we read the same
+     * `player_segments_skip` storage key Lampa core uses. So:
+     *   "auto"  →  we seek + show toast
+     *   "user"  →  silent (we don't impose; user chose manual control)
+     *   "none"  →  silent (user disabled segment skipping)
+     * ================================================================== */
+
+    var Skipper = (function () {
+        var current = [];           /* segments for the playback in flight */
+        var subscribed = false;
+
+        function activate(skip) {
+            current = (skip || []).map(function (s) {
+                return { start: s.start, end: s.end, fired: false };
+            });
+            if (subscribed) return;
+            subscribed = true;
+            try {
+                Lampa.PlayerVideo.listener.follow("timeupdate", onTimeUpdate);
+                Lampa.Player.listener.follow("destroy",       onPlayerDestroy);
+            } catch (e) {
+                Log.error("skipper.subscribe_failed", { err: e && e.message });
+            }
+        }
+
+        function onTimeUpdate() {
+            if (!current.length) return;
+            var mode;
+            try { mode = Lampa.Storage.get("player_segments_skip", "auto"); }
+            catch (_) { mode = "auto"; }
+            if (mode !== "auto") return;     /* user toggled to manual or off */
+
+            var v;
+            try { v = Lampa.PlayerVideo.video(); }
+            catch (_) { return; }
+            if (!v) return;
+            var t = v.currentTime;
+            if (typeof t !== "number" || isNaN(t) || !isFinite(t)) return;
+
+            for (var i = 0; i < current.length; i++) {
+                var seg = current[i];
+                if (seg.fired) continue;
+                if (t >= seg.start && t < seg.end) {
+                    seg.fired = true;
+                    var dur = (typeof v.duration === "number" && v.duration > 0) ? v.duration : seg.end;
+                    var target = Math.min(seg.end, dur);
+                    try { v.currentTime = target; }
+                    catch (e) { Log.error("skipper.seek_failed", { err: e && e.message, target: target }); return; }
+                    Log.info("skipper.skipped", {
+                        from: t.toFixed(2), to: target.toFixed(2), span: (target - seg.start).toFixed(2)
+                    });
+                    try { Lampa.Noty.show("Пропущено"); } catch (_) {}
+                    return;
+                }
+            }
+        }
+
+        function onPlayerDestroy() {
+            current = [];
+        }
+
+        return { activate: activate };
+    })();
+
     var Pipeline = (function () {
         function flattenToSkip(typed) {
             var out = [];
@@ -1310,6 +1389,11 @@
                     if (skip == null) return;       /* not a torrent stream */
                     if (!e.data.segments) e.data.segments = {};
                     e.data.segments.skip = skip;
+                    /* Belt-and-suspenders: native segments engine fails on
+                     * Tizen/WebOS/Orsay (DOM-event hook bypasses native players).
+                     * Skipper does the seek itself via the universal listener.
+                     * On HTML5 it duplicates Lampa core's seek harmlessly. */
+                    Skipper.activate(skip);
                 }, function (err) {
                     Log.error("hook.create_unhandled", { err: err && err.message });
                 });
