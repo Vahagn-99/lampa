@@ -18,7 +18,7 @@ DEV_LAMPA  := ./scripts/lampa-dev.sh
 
 .DEFAULT_GOAL := help
 
-.PHONY: help logs logs-tls catalog list lampa serve new-plugin install-dev clean distclean
+.PHONY: help logs logs-tls catalog list lampa serve new-plugin install-dev clean clean-logs distclean
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; print "Targets:"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -61,6 +61,8 @@ clean: ## Remove Playwright artifacts and stray .DS_Store files
 	rm -rf .playwright-mcp
 	find . -name '.DS_Store' -not -path './.git/*' -delete
 
-distclean: clean ## Also drop collected logs and scripts/ node_modules
+clean-logs: ## Wipe collected log files in $(LOG_DIR)
 	rm -rf $(LOG_DIR)
+
+distclean: clean clean-logs ## Also drop scripts/ node_modules
 	rm -rf scripts/node_modules
