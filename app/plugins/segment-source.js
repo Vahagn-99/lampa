@@ -35,9 +35,9 @@
     var Const = {
         LOG_PREFIX:          "[SegmentSource]",
         MIN_APP_DIGITAL:     300,                       /* Lampa 3.0.0 introduces the segments engine */
-        HEAD_RANGE_BYTES:    32 * 1024 * 1024,          /* enough cluster bytes to capture ~5 min of subtitle samples for recap + intro */
+        HEAD_RANGE_BYTES:    16 * 1024 * 1024,          /* covers ~3 min of cluster data — enough for recap detection from subs */
         SAFETY_BYTES:        64 * 1024 * 1024,          /* abort if server ignored Range and floods past this */
-        FETCH_TIMEOUT_MS:    8000,                      /* TorrServe over LAN: 16 MB ≈ 200ms; 8s = generous slack */
+        FETCH_TIMEOUT_MS:    15000,                     /* 16 MB over LAN: ~1-2s; over Wi-Fi/router: ~5-10s; 15s gives slack for slow links */
         API_TIMEOUT_MS:      5000,
         CACHE_TTL_MS:        30 * 24 * 3600 * 1000,     /* 30 days */
         CACHE_PREFIX:        "segsrc_ch_",              /* schema: { segments: [{start,end}], _ts: ms } */
