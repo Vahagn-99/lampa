@@ -93,6 +93,42 @@
             return parts.join(" ");
         }
 
+        /* Direct shipper — POST to log-server.py at the endpoint stored
+         * under `log_collector_endpoint`. We bypass the log-collector
+         * plugin's console.log monkey-patch entirely because Lampa core
+         * re-wraps console.log ~1s after boot
+         * (vendor/lampa-source/src/interaction/console.js Timer.add(1000)),
+         * which silently strips the patch. Without this direct path, only
+         * the very first synchronous emit of the plugin lands in the log
+         * file and everything async (every pipeline run) is invisible. */
+        function ship(level, msg) {
+            var endpoint = "";
+            try { endpoint = Lampa.Storage.get("log_collector_endpoint", "") || ""; }
+            catch (_) { return; }
+            if (!endpoint || typeof endpoint !== "string") return;
+
+            var url = endpoint.replace(/\/+$/, "") + "/log";
+            var body = JSON.stringify({
+                ts: Date.now(), level: level,
+                prefix: Const.LOG_PREFIX, msg: msg
+            });
+
+            /* Beacon — fire-and-forget, doesn't block, survives unload. */
+            try {
+                if (navigator.sendBeacon) {
+                    var blob = new Blob([body], { type: "application/json" });
+                    if (navigator.sendBeacon(url, blob)) return;
+                }
+            } catch (_) {}
+            /* XHR fallback for environments without sendBeacon. */
+            try {
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", url, true);
+                xhr.setRequestHeader("Content-Type", "application/json");
+                xhr.send(body);
+            } catch (_) {}
+        }
+
         function emit(level, op, fields) {
             if (LEVELS[level] < minLevel) return;
             var line = format(op, fields);
@@ -100,6 +136,7 @@
                 if (level === "error" || level === "warn") console.warn(line);
                 else console.log(line);
             } catch (_) {}
+            ship(level, line);
         }
 
         return {
