@@ -1002,6 +1002,57 @@
     })();
 
     /* ====================================================================
+     * Visible  —  user-facing diagnostic surface
+     *
+     * Lampa core re-wraps console.log ~1s after boot
+     * (vendor/lampa-source/src/interaction/console.js Timer.add(1000, …)),
+     * which silently breaks the log-collector capture chain for everything
+     * the plugin emits after that point. To stay observable on TVs without
+     * remote DevTools, we surface every pipeline outcome two ways:
+     *
+     *   1. Bell.push toast — a brief on-screen line ("SegmentSource: t1=0
+     *      t2=1 → 1 segments") at every playback start, identical visual
+     *      treatment to Lampa's own "Пропущено" toast.
+     *   2. Lampa.Storage  — last init + last run snapshot under stable keys
+     *      (`segsrc_last_init`, `segsrc_last_run`). These ride along in the
+     *      Cube sync, so a Storage dump on any device shows the latest run
+     *      even if we never received a single log line.
+     *
+     * Toast is silent for the non-TorrServe branch — we don't want to
+     * notify on every Kodik playback.
+     * ================================================================== */
+
+    var Visible = (function () {
+        function noteInit(appDigital) {
+            try {
+                Lampa.Storage.set("segsrc_last_init", JSON.stringify({
+                    ts: Date.now(),
+                    app_digital: appDigital
+                }));
+            } catch (_) {}
+        }
+
+        function noteRun(snapshot) {
+            try {
+                Lampa.Storage.set("segsrc_last_run", JSON.stringify(snapshot));
+            } catch (_) {}
+            try {
+                /* Lampa.Bell — same toast surface used by the segments
+                 * engine for "Пропущено". Use Lampa.Noty as fallback for
+                 * older builds that don't expose Bell. */
+                var line = "SegmentSource: t1=" + snapshot.tier1
+                         + " t2=" + snapshot.tier2
+                         + " → " + snapshot.segments + " seg ("
+                         + snapshot.reason + ")";
+                if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(line);
+                else if (Lampa.Bell && Lampa.Bell.push) Lampa.Bell.push({ text: line });
+            } catch (_) {}
+        }
+
+        return { noteInit: noteInit, noteRun: noteRun };
+    })();
+
+    /* ====================================================================
      * Pipeline  —  tiered segment lookup
      *
      * Each tier produces typed segments [{start, end, type}] or empty.
@@ -1086,6 +1137,7 @@
          */
         function load(data) {
             var cid = Log.newCid();
+            var t0 = Date.now();
             return new Promise(function (resolve) {
                 var url = data && data.url;
                 var cls = Url.classify(url);
@@ -1103,7 +1155,8 @@
                     var cached = Storage.get(ckey);
                     if (cached !== null) {
                         Log.info("pipeline.cache_hit", { cid: cid, segments: cached.length });
-                        resolve(cached);
+                        finish({ cid: cid, ckey: null, skip: cached, resolve: resolve, reason: "cache_hit",
+                                 tier1: 0, tier2: 0, ms: Date.now() - t0, infohash: cls.infohash, index: cls.fileIndex });
                         return;
                     }
                 }
@@ -1111,32 +1164,64 @@
                 Range.fetch(Url.toPlayable(url), Const.HEAD_RANGE_BYTES, Const.FETCH_TIMEOUT_MS, cid)
                     .then(function (buf) {
                         if (!buf) {
-                            return finishWith(cid, ckey, [], resolve, "tier1.no_buffer");
+                            finish({ cid: cid, ckey: ckey, skip: [], resolve: resolve, reason: "tier1.no_buffer",
+                                     tier1: 0, tier2: 0, ms: Date.now() - t0, infohash: cls.infohash, index: cls.fileIndex });
+                            return;
                         }
 
                         var t1 = tier1Chapters(buf, cid);
-                        if (t1.length) return finishWith(cid, ckey, flattenToSkip(t1), resolve, "tier1.success");
+                        if (t1.length) {
+                            finish({ cid: cid, ckey: ckey, skip: flattenToSkip(t1), resolve: resolve, reason: "tier1.success",
+                                     tier1: t1.length, tier2: 0, ms: Date.now() - t0, infohash: cls.infohash, index: cls.fileIndex });
+                            return;
+                        }
 
                         var t2 = tier2Subtitles(buf, cid);
-                        if (t2.length) return finishWith(cid, ckey, flattenToSkip(t2), resolve, "tier2.success");
+                        if (t2.length) {
+                            finish({ cid: cid, ckey: ckey, skip: flattenToSkip(t2), resolve: resolve, reason: "tier2.success",
+                                     tier1: 0, tier2: t2.length, ms: Date.now() - t0, infohash: cls.infohash, index: cls.fileIndex });
+                            return;
+                        }
 
                         var meta = Meta.extract(data);
                         if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
                             Log.debug("tier3.skip_no_meta", { cid: cid, meta: meta });
-                            return finishWith(cid, ckey, [], resolve, "no_segments");
+                            finish({ cid: cid, ckey: ckey, skip: [], resolve: resolve, reason: "no_segments",
+                                     tier1: 0, tier2: 0, ms: Date.now() - t0, infohash: cls.infohash, index: cls.fileIndex });
+                            return;
                         }
                         tier3Api(meta, cid).then(function (apiSeg) {
-                            return finishWith(cid, ckey, flattenToSkip(apiSeg), resolve,
-                                              apiSeg.length ? "tier3.success" : "no_segments");
+                            finish({ cid: cid, ckey: ckey, skip: flattenToSkip(apiSeg), resolve: resolve,
+                                     reason: apiSeg.length ? "tier3.success" : "no_segments",
+                                     tier1: 0, tier2: 0, ms: Date.now() - t0, infohash: cls.infohash, index: cls.fileIndex });
                         });
                     });
             });
         }
 
-        function finishWith(cid, ckey, skip, resolve, reason) {
-            if (ckey) Storage.set(ckey, skip);
-            Log.info("pipeline.finish", { cid: cid, segments: skip.length, reason: reason });
-            resolve(skip);
+        /* Single sink for "we're done with this playback":
+         * - writes cache (so next play of same file is a synchronous hit)
+         * - emits a structured log line (in case log-collector caught it)
+         * - drops a Storage trace + Bell toast for users without log access
+         * - resolves the awaiting Promise so Lampa core gets the segments. */
+        function finish(ctx) {
+            if (ctx.ckey) Storage.set(ctx.ckey, ctx.skip);
+            Log.info("pipeline.finish", {
+                cid: ctx.cid, segments: ctx.skip.length, reason: ctx.reason,
+                tier1: ctx.tier1, tier2: ctx.tier2, ms: ctx.ms
+            });
+            Visible.noteRun({
+                ts: Date.now(),
+                cid: ctx.cid,
+                infohash: ctx.infohash,
+                index: ctx.index,
+                tier1: ctx.tier1,
+                tier2: ctx.tier2,
+                segments: ctx.skip.length,
+                reason: ctx.reason,
+                ms: ctx.ms
+            });
+            ctx.resolve(ctx.skip);
         }
 
         return { load: load };
@@ -1172,6 +1257,7 @@
                 return;
             }
             Log.info("init.ok", { app_digital: ver });
+            Visible.noteInit(ver);
         }
 
         /* `'create'` is the right hook (vs `'start'`) because it fires before
