@@ -14,7 +14,7 @@ per day (plus a combined all-<date>.log). Zero external dependencies —
 Python 3.8+ stdlib only.
 
 Usage:
-    python3 log-server.py                       # port 9999, logs in ./logs, HTTP
+    python3 log-server.py                       # port 9999, logs in ./storage/logs, HTTP
     python3 log-server.py --port 8080
     python3 log-server.py --dir /tmp/lampa-logs
     python3 log-server.py --quiet               # no stdout mirroring
@@ -248,7 +248,7 @@ def main():
     parser = argparse.ArgumentParser(description="Lampa plugin log collector server")
     parser.add_argument("--port", type=int, default=9999)
     parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--dir", default="logs")
+    parser.add_argument("--dir", default="storage/logs")
     parser.add_argument("--quiet", action="store_true", help="don't mirror entries to stdout")
     parser.add_argument("--tls", action="store_true", help="enable HTTPS with self-signed cert")
     parser.add_argument("--cert", default="lampa-log-server.cert.pem")
