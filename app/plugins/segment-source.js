@@ -795,23 +795,24 @@
                 var endSec = lastDense + 3;
                 var nextIdx = lastDenseIdx + 1;
                 if (nextIdx < samples.length) {
-                    /* There IS a sample past the dense block — check the gap. */
+                    /* There IS a sample past the dense block — check the gap.
+                     * If it's in the INTRO range (signature of an opening
+                     * theme with no dialogue) and starts within the first 3
+                     * minutes of the episode, merge the gap into one skip
+                     * segment up to the first episode-body line. */
                     var nextSample = samples[nextIdx];
                     var introGap = nextSample.time - lastDense;
                     if (introGap >= Const.SUB_INTRO_GAP_MIN_S
                         && introGap <= Const.SUB_INTRO_GAP_MAX_S
                         && nextSample.time <= Const.SUB_INTRO_BEFORE_S + lastDense) {
-                        /* Opening theme between recap and episode body — merge. */
                         endSec = Math.max(endSec, nextSample.time - 1);
                     }
-                } else if (lastDense < 90) {
-                    /* No more samples in our window AND dense block ended in the
-                     * first 90s of the episode — opening theme almost certainly
-                     * extends past our fetched bytes. Extend by a conservative
-                     * 60s to cover a typical opening sequence. The Skipper's
-                     * Math.min(seg.end, video.duration) clamp keeps it bounded. */
-                    endSec = lastDense + 60;
                 }
+                /* If we ran out of samples after the dense block we cannot tell
+                 * where the episode body starts. Stay honest: emit only what we
+                 * actually know (the recap dialog block). The user might still
+                 * see the opening theme — that's preferable to over-skipping
+                 * into the cold open of a show with a short intro. */
                 var dur = endSec - startSec;
                 if (dur < Const.SUB_RECAP_MIN_S || dur > Const.SUB_RECAP_MAX_S) return null;
                 return { start: startSec, end: endSec, type: "recap" };
