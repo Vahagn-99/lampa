@@ -34,7 +34,7 @@
     var FETCH_TIMEOUT_MS = 5000;
     var API_TIMEOUT_MS = 5000;
     var CACHE_TTL_MS = 30 * 24 * 3600 * 1000;   /* 30 days */
-    var CACHE_PREFIX = "segsrc_ch_";
+    var CACHE_PREFIX = "segsrc2_ch_";           /* bumped from segsrc_ch_ — earlier entries cached empty results due to a TorrServe &preload bug (see fetchHead) */
     var MIGRATION_KEY = "segsrc_v1_purged";
     var INTRODB_BASE = "https://api.theintrodb.org/v2/media";
 
@@ -339,10 +339,17 @@
 
     function fetchHead(url, byteLimit, timeoutMs) {
         return new Promise(function (resolve) {
+            /* TorrServe behaviour: a `&preload` flag tells the server "warm the
+             * cache in the background", and the response is HTTP 200 with a
+             * zero-byte body — no actual stream data. We must rewrite to `&play`
+             * to receive real bytes. (vendor/lampa-source/src/interaction/torserver.js:127) */
+            var fetchUrl = url.indexOf("&preload") !== -1
+                ? url.replace("&preload", "&play")
+                : url;
             var done = false;
             var xhr = new XMLHttpRequest();
             try {
-                xhr.open("GET", url, true);
+                xhr.open("GET", fetchUrl, true);
                 xhr.responseType = "arraybuffer";
                 xhr.setRequestHeader("Range", "bytes=0-" + (byteLimit - 1));
             } catch (_) {
@@ -364,7 +371,11 @@
                 /* 206 partial content (expected) or 200 (server ignored Range) */
                 if (xhr.status === 206 || xhr.status === 200) {
                     var buf = xhr.response;
-                    if (!buf) { log("mkv_fetch_empty"); resolve(null); return; }
+                    if (!buf || buf.byteLength === 0) {
+                        log("mkv_fetch_empty", "status=" + xhr.status);
+                        resolve(null);
+                        return;
+                    }
                     if (xhr.status === 200 && buf.byteLength > MKV_SAFETY_BYTES) {
                         log("mkv_fetch_oversize", buf.byteLength);
                         resolve(null);
@@ -665,7 +676,10 @@
 
     /* ---------- bootstrap ---------- */
 
+    var _initialized = false;
     function init() {
+        if (_initialized) return;       /* bootstrap fires init twice — once via app:ready, once via setTimeout safety net */
+        _initialized = true;
         migrate();
 
         /* Feature-detect: segments engine shipped in Lampa core 3.0.0
