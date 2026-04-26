@@ -105,6 +105,31 @@
                 if (e && e.params && e.params.movie) lastSeenCard = e.params.movie;
             });
         } catch (_) {}
+        patchTorrentOpen();
+    }
+
+    /* Lampa.Torrent.open(hash, card) is called directly from history-row
+     * resumers (last-watched-resume) and other one-click playback paths
+     * that bypass the activity stack. Files are then fetched and
+     * Player.play(element) runs — if our 'torrent_file' list_open listener
+     * for some reason missed the dispatch (race, throttling on Tizen),
+     * Player.play would fire 'create' before lastSeenCard was set. The
+     * monkey-patch captures the card synchronously, the moment Torrent.open
+     * is called, *before* any async work. Coexists with last-watched-
+     * resume's identical patch via separate guard tag — both wrappers run,
+     * both capture, no conflict. */
+    function patchTorrentOpen() {
+        try {
+            if (!Lampa.Torrent || typeof Lampa.Torrent.open !== "function") return;
+            if (Lampa.Torrent.open.__segsrc_patched) return;
+            var orig = Lampa.Torrent.open;
+            Lampa.Torrent.open = function (hash, card) {
+                try { if (card && card.id != null) lastSeenCard = card; }
+                catch (_) {}
+                return orig.apply(this, arguments);
+            };
+            Lampa.Torrent.open.__segsrc_patched = true;
+        } catch (_) {}
     }
 
     /* ---------- TMDB id / season / episode extraction ---------- */
