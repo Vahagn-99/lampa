@@ -233,9 +233,12 @@
             }
             var ckey = Cache.key(meta.tmdb_id, meta.season, meta.episode);
             var cached = Cache.get(ckey);
-            if (cached !== null) { resolve(cached); return; }
+            /* Use cache only when it has actual segments. Empty results are
+             * intentionally NOT cached so a "no data" verdict from the API
+             * gets retried on next play — community DBs add labels over time. */
+            if (cached !== null && cached.length > 0) { resolve(cached); return; }
             fetchApi(meta.tmdb_id, meta.season, meta.episode).then(function (skip) {
-                Cache.set(ckey, skip);
+                if (skip.length) Cache.set(ckey, skip);
                 resolve(skip);
             });
         });
@@ -258,7 +261,17 @@
         if (!e || !e.data) return;
         try {
             loadSegments(e.data).then(function (skip) {
-                if (!skip || !skip.length) return;
+                if (skip == null) return;       /* no TMDB metadata — silent */
+                /* Notify only when the user has actually opted into auto-skip,
+                 * so we don't spam users who keep the native toggle on "Откл". */
+                var mode;
+                try { mode = Lampa.Storage.get("player_segments_skip", "auto"); }
+                catch (_) { mode = "auto"; }
+                if (mode === "auto" && !skip.length) {
+                    try { Lampa.Noty.show("Источник сегментов: для этого эпизода нет таймкодов"); }
+                    catch (_) {}
+                }
+                if (!skip.length) return;
                 if (!e.data.segments) e.data.segments = {};
                 e.data.segments.skip = skip;
                 skipperActivate(skip);
