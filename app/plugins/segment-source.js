@@ -76,11 +76,23 @@
 
     function trackCards() {
         if (!window.Lampa || !Lampa.Listener) return;
+        /* 'full' — fires when card details are loaded full-screen. */
         try {
             Lampa.Listener.follow("full", function (e) {
                 if (e && e.type === "complite" && e.data && e.data.movie) {
                     lastSeenCard = e.data.movie;
                 }
+            });
+        } catch (_) {}
+        /* 'activity' — fires on every navigation (online / torrents / full /
+         * episodes-list / etc). Catches flows where the user goes through
+         * History → Card → Season → Episode → Torrent without a fresh 'full'
+         * load — but the activity descriptor still carries .movie or .card. */
+        try {
+            Lampa.Listener.follow("activity", function (e) {
+                if (!e || !e.object) return;
+                var card = e.object.movie || e.object.card;
+                if (card && card.id != null) lastSeenCard = card;
             });
         } catch (_) {}
         try {
