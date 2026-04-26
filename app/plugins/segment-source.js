@@ -163,11 +163,17 @@
             if (!arr || !arr.length) continue;
             for (var j = 0; j < arr.length; j++) {
                 var seg = arr[j];
-                var s = seg.start_ms != null ? seg.start_ms / 1000 : seg.start;
-                var e = seg.end_ms   != null ? seg.end_ms   / 1000
-                        : (seg.end == null ? END_CAP : seg.end);
-                if (s == null || !isFinite(s)) continue;
-                if (e == null) e = END_CAP;
+                /* TheIntroDB convention: start_ms=null means "from start of
+                 * file" (treat as 0); end_ms=null means "to end of file"
+                 * (treat as MAX_SAFE_INTEGER, Skipper clamps to video
+                 * duration). Common for recap-from-zero and credits-to-end. */
+                var s = (seg.start_ms === null) ? 0
+                      : (seg.start_ms != null ? seg.start_ms / 1000
+                      : (seg.start == null ? 0 : seg.start));
+                var e = (seg.end_ms === null) ? END_CAP
+                      : (seg.end_ms != null ? seg.end_ms / 1000
+                      : (seg.end == null ? END_CAP : seg.end));
+                if (!isFinite(s) || s < 0) continue;
                 if (e <= s) continue;
                 out.push({ start: s, end: e });
             }
