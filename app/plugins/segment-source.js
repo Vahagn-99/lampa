@@ -62,29 +62,71 @@
         }
     };
 
+    /* ---------- card tracking ----------
+     * Lampa.Player.play(data) for torrent flow only contains file-level
+     * info (.url/.path/etc) — no card. The user navigated through Card →
+     * Season → Episode → Torrent → File, but only the leaf file payload
+     * reaches the player. We track every card the user opens via the
+     * 'full' event (fires when card details are loaded) and the 'torrent'
+     * events (fire when user enters torrent search/files) so extractMeta
+     * has a fallback when data.card is empty.
+     */
+
+    var lastSeenCard = null;
+
+    function trackCards() {
+        if (!window.Lampa || !Lampa.Listener) return;
+        try {
+            Lampa.Listener.follow("full", function (e) {
+                if (e && e.type === "complite" && e.data && e.data.movie) {
+                    lastSeenCard = e.data.movie;
+                }
+            });
+        } catch (_) {}
+        try {
+            Lampa.Listener.follow("torrent", function (e) {
+                if (e && e.params && e.params.movie) lastSeenCard = e.params.movie;
+            });
+        } catch (_) {}
+        try {
+            Lampa.Listener.follow("torrent_file", function (e) {
+                if (e && e.params && e.params.movie) lastSeenCard = e.params.movie;
+            });
+        } catch (_) {}
+    }
+
     /* ---------- TMDB id / season / episode extraction ---------- */
+
+    function pickIds(out, card) {
+        if (!card) return;
+        if (!out.tmdb_id && card.id) out.tmdb_id = card.id;
+        if (!out.imdb_id && card.imdb_id && /^tt[0-9]{7,8}$/.test(card.imdb_id)) {
+            out.imdb_id = card.imdb_id;
+        }
+    }
 
     function extractMeta(data) {
         var out = { tmdb_id: null, imdb_id: null, season: null, episode: null };
         if (!data) return out;
 
-        var card = data.card || null;
-        if (!card) {
+        /* Source 1 — direct payload card (when present). */
+        pickIds(out, data.card);
+
+        /* Source 2 — current Activity's card / movie. */
+        if (!out.tmdb_id && !out.imdb_id) {
             try {
                 var act = Lampa.Activity.active();
-                if (act) card = act.card || act.movie || null;
+                if (act) {
+                    pickIds(out, act.card);
+                    pickIds(out, act.movie);
+                }
             } catch (_) {}
         }
-        if (card) {
-            out.tmdb_id = card.id || null;
-            /* TheIntroDB accepts imdb_id as a fallback when tmdb_id is missing.
-             * Lampa cards from some sources (Kinopoisk-only, certain torrent
-             * scrapers) carry imdb_id but no TMDB id — without this we'd skip
-             * those plays entirely. Format must be "tt" + 7-8 digits. */
-            if (card.imdb_id && /^tt[0-9]{7,8}$/.test(card.imdb_id)) {
-                out.imdb_id = card.imdb_id;
-            }
-        }
+
+        /* Source 3 — last card the user opened (tracked via 'full' /
+         * 'torrent' listeners). This catches the torrent flow where the
+         * Player payload only carries the file info, not the parent card. */
+        if (!out.tmdb_id && !out.imdb_id) pickIds(out, lastSeenCard);
 
         if (data.season  != null) out.season  = parseInt(data.season,  10);
         if (data.episode != null) out.episode = parseInt(data.episode, 10);
@@ -291,6 +333,7 @@
         var ver = (Lampa.Manifest && typeof Lampa.Manifest.app_digital === "number")
                   ? Lampa.Manifest.app_digital : 0;
         if (ver < Const.MIN_APP_DIGITAL) return;
+        trackCards();
         try { Lampa.Player.listener.follow("create", onPlayerCreate); } catch (_) {}
     }
 
