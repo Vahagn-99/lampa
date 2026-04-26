@@ -298,17 +298,31 @@
         if (!e || !e.data) return;
         try {
             loadSegments(e.data).then(function (skip) {
-                if (skip == null) return;       /* no TMDB metadata — silent */
-                /* Notify only when the user has actually opted into auto-skip,
-                 * so we don't spam users who keep the native toggle on "Откл". */
+                /* Notify only when the user has actually opted into auto-skip
+                 * so we don't spam users who left the native toggle on "Откл". */
                 var mode;
                 try { mode = Lampa.Storage.get("player_segments_skip", "auto"); }
                 catch (_) { mode = "auto"; }
-                if (mode === "auto" && !skip.length) {
-                    try { Lampa.Noty.show("Источник сегментов: для этого эпизода нет таймкодов"); }
-                    catch (_) {}
+                var notifyOn = (mode === "auto");
+
+                if (skip == null) {
+                    /* Couldn't extract TMDB id (or imdb_id) — typical for
+                     * direct TorrServe playback without going through search,
+                     * IPTV, YouTube. Tell the user honestly so it's not
+                     * indistinguishable from "plugin not loaded". */
+                    if (notifyOn) {
+                        try { Lampa.Noty.show("Источник сегментов: эпизод не определён (нет TMDB id)"); }
+                        catch (_) {}
+                    }
+                    return;
                 }
-                if (!skip.length) return;
+                if (!skip.length) {
+                    if (notifyOn) {
+                        try { Lampa.Noty.show("Источник сегментов: для этого эпизода нет таймкодов"); }
+                        catch (_) {}
+                    }
+                    return;
+                }
                 if (!e.data.segments) e.data.segments = {};
                 e.data.segments.skip = skip;
                 skipperActivate(skip);
