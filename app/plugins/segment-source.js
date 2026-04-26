@@ -65,7 +65,7 @@
     /* ---------- TMDB id / season / episode extraction ---------- */
 
     function extractMeta(data) {
-        var out = { tmdb_id: null, season: null, episode: null };
+        var out = { tmdb_id: null, imdb_id: null, season: null, episode: null };
         if (!data) return out;
 
         var card = data.card || null;
@@ -75,7 +75,16 @@
                 if (act) card = act.card || act.movie || null;
             } catch (_) {}
         }
-        if (card) out.tmdb_id = card.id || null;
+        if (card) {
+            out.tmdb_id = card.id || null;
+            /* TheIntroDB accepts imdb_id as a fallback when tmdb_id is missing.
+             * Lampa cards from some sources (Kinopoisk-only, certain torrent
+             * scrapers) carry imdb_id but no TMDB id — without this we'd skip
+             * those plays entirely. Format must be "tt" + 7-8 digits. */
+            if (card.imdb_id && /^tt[0-9]{7,8}$/.test(card.imdb_id)) {
+                out.imdb_id = card.imdb_id;
+            }
+        }
 
         if (data.season  != null) out.season  = parseInt(data.season,  10);
         if (data.episode != null) out.episode = parseInt(data.episode, 10);
@@ -115,18 +124,38 @@
     var END_CAP   = Number.MAX_SAFE_INTEGER || 9007199254740991;
     var API_TYPES = ["intro", "recap", "credits", "preview"];
 
-    function fetchApi(tmdbId, season, episode) {
+    function fetchApi(meta) {
         return new Promise(function (resolve) {
-            if (!tmdbId || season == null || episode == null) { resolve([]); return; }
-            var url = Const.API_URL
-                + "?tmdb_id=" + encodeURIComponent(tmdbId)
-                + "&season="  + encodeURIComponent(season)
-                + "&episode=" + encodeURIComponent(episode);
+            /* Need either tmdb_id OR imdb_id. For TV both season & episode
+             * required; for movies they must be omitted entirely (per
+             * OpenAPI: "season and episode must be omitted when type is
+             * movie"). isTv = both episode bounds present, else movie. */
+            var hasId = !!(meta.tmdb_id || meta.imdb_id);
+            if (!hasId) { resolve([]); return; }
+            var isTv = (meta.season != null && meta.episode != null);
+
+            var qs = [];
+            if (meta.tmdb_id) qs.push("tmdb_id=" + encodeURIComponent(meta.tmdb_id));
+            else              qs.push("imdb_id=" + encodeURIComponent(meta.imdb_id));
+            if (isTv) {
+                qs.push("season="  + encodeURIComponent(meta.season));
+                qs.push("episode=" + encodeURIComponent(meta.episode));
+            }
+            var url = Const.API_URL + "?" + qs.join("&");
+
             var done = false;
             var xhr = new XMLHttpRequest();
             try {
                 xhr.open("GET", url, true);
                 xhr.setRequestHeader("Accept", "application/json");
+                /* Optional API key — bumps rate limit 100→500/day and lets
+                 * the requester see their own pending submissions immediately
+                 * (weighted 10× in the response average). User sets via:
+                 *   Lampa.Storage.set("theintrodb_api_key", "<key>")  */
+                var apiKey = "";
+                try { apiKey = Lampa.Storage.get("theintrodb_api_key", "") || ""; }
+                catch (_) {}
+                if (apiKey) xhr.setRequestHeader("Authorization", "Bearer " + apiKey);
             } catch (_) { resolve([]); return; }
             var timer = setTimeout(function () {
                 if (done) return;
@@ -233,17 +262,19 @@
     function loadSegments(data) {
         return new Promise(function (resolve) {
             var meta = extractMeta(data);
-            if (!meta.tmdb_id || meta.season == null || meta.episode == null) {
-                resolve(null);
-                return;
-            }
-            var ckey = Cache.key(meta.tmdb_id, meta.season, meta.episode);
+            /* Need at least tmdb_id or imdb_id. For TV we additionally need
+             * both season and episode; for movies neither is needed (TheIntroDB
+             * stores intro/recap/credits/preview for movies too — trilogies,
+             * franchise films often have recap windows). */
+            var hasId = !!(meta.tmdb_id || meta.imdb_id);
+            if (!hasId) { resolve(null); return; }
+            var isTv = (meta.season != null && meta.episode != null);
+
+            var idForKey = meta.tmdb_id || meta.imdb_id;
+            var ckey = Cache.key(idForKey, isTv ? meta.season : 0, isTv ? meta.episode : 0);
             var cached = Cache.get(ckey);
-            /* Use cache only when it has actual segments. Empty results are
-             * intentionally NOT cached so a "no data" verdict from the API
-             * gets retried on next play — community DBs add labels over time. */
             if (cached !== null && cached.length > 0) { resolve(cached); return; }
-            fetchApi(meta.tmdb_id, meta.season, meta.episode).then(function (skip) {
+            fetchApi(meta).then(function (skip) {
                 if (skip.length) Cache.set(ckey, skip);
                 resolve(skip);
             });
