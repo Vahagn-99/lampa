@@ -1004,7 +1004,7 @@
     }
 
     function dispatchFallbackToFull(entry, card, reason) {
-        log('resume:fallback', 'reason=' + reason, 'card_id=' + entry.card_id);
+        log('resume:fallback', 'target=full', 'reason=' + reason, 'card_id=' + entry.card_id);
         try {
             var method = 'movie';
             if (card.name || card.number_of_seasons || card.first_air_date) method = 'tv';
@@ -1018,6 +1018,43 @@
                 source:    card.source || 'tmdb'
             });
         } catch (e) { err('fallback', 'Activity.push fail', e && e.message); }
+    }
+
+    // Specialised fallback for torrent paths: when TorrServer purged the
+    // hash (or our magnet capture missed), there's no point sending the
+    // user back to the card screen — they'd just have to find and click
+    // "Торренты" themselves. Skip a step and open the torrent search
+    // directly. Bonus: a click on any torrent in the list runs through
+    // patchTorrentStart → magnet captured → next resume is instant.
+    function dispatchFallbackToTorrents(entry, card, reason) {
+        log('resume:fallback', 'target=torrents', 'reason=' + reason, 'card_id=' + entry.card_id);
+        try {
+            var year = '';
+            try {
+                var date = card.release_date || card.first_air_date || '';
+                if (date) year = (date + '').slice(0, 4);
+            } catch (ex) {}
+            var title  = card.title || card.name || '';
+            var origin = card.original_title || card.original_name || title;
+            // Mirror the search-string composition of Lampa's standard
+            // Торренты button (full/start/torrents.js:14-24). We use the
+            // 'df_lg' combination — original + title, no year — which is
+            // the most permissive and safest default across torrent sites.
+            Lampa.Activity.push({
+                url:        '',
+                title:      Lampa.Lang.translate('title_torrents'),
+                component:  'torrents',
+                search:     origin + (title && title !== origin ? ' ' + title : ''),
+                search_one: title,
+                search_two: origin,
+                movie:      card,
+                page:       1
+            });
+        } catch (e) {
+            err('fallback', 'torrents Activity.push fail', e && e.message);
+            // Last-resort: card screen.
+            dispatchFallbackToFull(entry, card, 'torrents_push_fail:' + reason);
+        }
     }
 
     // ========================================================================
@@ -1468,7 +1505,7 @@
     function dispatchTorrentResume(entry, card) {
         if (!Lampa.Torrent) {
             err('resume:torrent', 'fail', 'reason=api_missing');
-            dispatchFallbackToFull(entry, card, 'torrent_api_missing');
+            dispatchFallbackToTorrents(entry, card, 'torrent_api_missing');
             return;
         }
         var magnet = entry.source.magnet || '';
@@ -1496,13 +1533,13 @@
                 err('resume:torrent', 'Torrent.start fail', e && e.message);
                 TorrentAutoclick.abort('start_fail');
                 TorrentSafetyNet.disarm();
-                dispatchFallbackToFull(entry, card, 'torrent_start_fail');
+                dispatchFallbackToTorrents(entry, card, 'torrent_start_fail');
             }
             return;
         }
         if (typeof Lampa.Torrent.open !== 'function') {
             err('resume:torrent', 'fail', 'reason=api_missing');
-            dispatchFallbackToFull(entry, card, 'torrent_api_missing');
+            dispatchFallbackToTorrents(entry, card, 'torrent_api_missing');
             return;
         }
         log('resume:dispatch', 'target=torrent', 'mode=open',
@@ -1517,7 +1554,7 @@
             err('resume:torrent', 'Torrent.open fail', e && e.message);
             TorrentAutoclick.abort('open_fail');
             TorrentSafetyNet.disarm();
-            dispatchFallbackToFull(entry, card, 'torrent_open_fail');
+            dispatchFallbackToTorrents(entry, card, 'torrent_open_fail');
         }
     }
 
@@ -1580,7 +1617,7 @@
                     Lampa.Modal.close();
                 }
             } catch (ex) {}
-            if (entry && card) dispatchFallbackToFull(entry, card, 'torrserver_404');
+            if (entry && card) dispatchFallbackToTorrents(entry, card, 'torrserver_404');
         }
     };
 
@@ -1821,7 +1858,7 @@
         try {
             Lampa.Manifest.plugins = {
                 type:        'video',
-                version:     '0.2.1',
+                version:     '0.2.2',
                 name:        'Last Watched Resume',
                 description: 'One-click resume — last 5 watched titles row on the main screen, online + torrent.'
             };
