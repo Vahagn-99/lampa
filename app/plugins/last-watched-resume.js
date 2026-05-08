@@ -43,11 +43,14 @@
     var CLEAR_KEY            = NS + 'clear';
     var ROW_NAME             = 'last_watched_resume';
     var MAX_QUEUE            = 5;
-    var AUTOCLICK_TIMEOUT_MS = 3000;
+    var AUTOCLICK_TIMEOUT_MS = 6000;
     var MIN_APP_DIGITAL      = 300;
+    var REORDER_CLASS        = 'lwr-reorder-active';
+    var DELETE_UNDO_MS       = 4000;
 
     var _initialized        = false;
     var _captureBound       = false;
+    var _stylesInjected     = false;
     var _activeAutoclick    = null; // current OnlineAutoclick / TorrentAutoclick
 
     // Pending playback context — fed by activity / torrent_file / Torrent.open
@@ -171,10 +174,23 @@
 
     function detectSource(data) {
         if (data.torrent_hash) {
+            // Magnet — captured by patchTorrentStart into pending context
+            // before TorrServer ever saw the hash. Pull it back so we can
+            // re-add the torrent later if TorrServer purged it.
+            var magnet = '';
+            if (data.card && data.card.id != null) {
+                var ctx = pendingContextForCard(data.card.id, 'torrent');
+                if (ctx && ctx.magnet) magnet = ctx.magnet;
+                if (!magnet) {
+                    var saved = readPendingSource(data.card.id);
+                    if (saved && saved.magnet) magnet = saved.magnet;
+                }
+            }
             return {
                 kind:         'torrent',
                 torrent_hash: data.torrent_hash,
-                file_path:    extractFilePath(data)
+                file_path:    extractFilePath(data),
+                magnet:       magnet
             };
         }
         var balanser = '';
@@ -185,13 +201,19 @@
         return { kind: 'other' };
     }
 
+    function pendingContextForCard(card_id, kind) {
+        pruneContext();
+        var i;
+        for (i = 0; i < _pendingContext.length; i++) {
+            var p = _pendingContext[i];
+            if (p.card.id === card_id && p.kind === kind) return p;
+        }
+        return null;
+    }
+
     function extractFilePath(data) {
-        // Lampa's torrent.js Arrays.extend the file element with `path` (file
-        // path within torrent) before Player.play(element). Fall back to URL
-        // parsing for older builds where `path` may not have propagated.
         if (data.path && typeof data.path === 'string') return data.path;
         if (data.url && typeof data.url === 'string') {
-            // Torserver stream URL pattern: ...?link=<hash>&index=<id>&path=<path>
             var m = data.url.match(/[?&]path=([^&]+)/);
             if (m) {
                 try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; }
@@ -271,8 +293,23 @@
             balanser:     extra && extra.balanser     ? extra.balanser     : null,
             torrent_hash: extra && extra.torrent_hash ? extra.torrent_hash : null,
             file_path:    extra && extra.file_path    ? extra.file_path    : null,
+            magnet:       extra && extra.magnet       ? extra.magnet       : null,
             ts:           Date.now()
         };
+        // If we already had context with a magnet for this card and the new
+        // observation doesn't include one, preserve the magnet — Lampa fires
+        // multiple events for one playback (Torrent.start → Torrent.open →
+        // torrent_file) and only the first carries MagnetUri.
+        if (!ctx.magnet) {
+            var prior;
+            for (i = 0; i < _pendingContext.length; i++) {
+                prior = _pendingContext[i];
+                if (prior.card.id === card.id && prior.magnet) {
+                    ctx.magnet = prior.magnet;
+                    break;
+                }
+            }
+        }
         filtered.unshift(ctx);
         _pendingContext = filtered.slice(0, PENDING_CAP);
         log('context:remember',
@@ -280,6 +317,7 @@
             'kind=' + kind,
             (ctx.balanser     ? 'balanser=' + ctx.balanser : ''),
             (ctx.torrent_hash ? 'hash=' + ctx.torrent_hash.slice(0, 8) : ''),
+            (ctx.magnet       ? 'magnet=present' : ''),
             'pending=' + _pendingContext.length);
     }
 
@@ -413,6 +451,7 @@
             map[card_id] = { kind: source.kind, balanser: source.balanser || null,
                              torrent_hash: source.torrent_hash || null,
                              file_path: source.file_path || null,
+                             magnet: source.magnet || null,
                              ts: Date.now() };
             // Cap by trimming oldest entries when over capacity.
             var keys = Object.keys(map);
@@ -429,6 +468,33 @@
     function readPendingSource(card_id) {
         var map = pendingSrcMap();
         return map[card_id] || null;
+    }
+
+    // Monkey-patch Lampa.Torrent.start(element, movie) — primary path through
+    // which Lampa launches a torrent from the search-results screen. The
+    // `element` here carries `MagnetUri` / `Link` BEFORE TorrServer ever sees
+    // a hash. Capturing the magnet now means our queue entry can re-add the
+    // torrent to TorrServer on resume, even if it was purged in between.
+    var _origTorrentStart = null;
+    function patchTorrentStart() {
+        try {
+            if (!Lampa.Torrent || typeof Lampa.Torrent.start !== 'function') return;
+            if (Lampa.Torrent.start.__lwr_patched) return;
+            _origTorrentStart = Lampa.Torrent.start;
+            Lampa.Torrent.start = function (element, movie) {
+                try {
+                    if (movie && movie.id != null && element) {
+                        var magnet = element.MagnetUri || element.Link || '';
+                        if (magnet) {
+                            rememberContext(movie, 'torrent', { magnet: magnet });
+                            persistPendingSource(movie.id, { kind: 'torrent', magnet: magnet });
+                        }
+                    }
+                } catch (ex) {}
+                return _origTorrentStart.apply(this, arguments);
+            };
+            Lampa.Torrent.start.__lwr_patched = true;
+        } catch (ex) { warn('patch', 'Torrent.start fail', ex && ex.message); }
     }
 
     // Monkey-patch Lampa.Torrent.open(hash, card) to capture torrent context
@@ -598,7 +664,8 @@
                     source = {
                         kind:         'torrent',
                         torrent_hash: srcInfo.torrent_hash || '',
-                        file_path:    srcInfo.file_path    || ''
+                        file_path:    srcInfo.file_path    || '',
+                        magnet:       srcInfo.magnet       || ''
                     };
                 } else if (srcInfo && srcInfo.kind === 'online') {
                     source = { kind: 'online', balanser: srcInfo.balanser || '' };
@@ -680,7 +747,8 @@
                 source = {
                     kind:         'torrent',
                     torrent_hash: ctx.torrent_hash || '',
-                    file_path:    ctx.file_path    || ''
+                    file_path:    ctx.file_path    || '',
+                    magnet:       ctx.magnet       || ''
                 };
             } else if (ctx.kind === 'online') {
                 source = { kind: 'online', balanser: ctx.balanser || '' };
@@ -898,10 +966,25 @@
         dispatchResume(entry, data);
     }
 
+    function onCaptureLong(e) {
+        if (!isEnabled()) return;
+        if (MoveMode.active) return; // ignore while reordering — Controller owns input
+        var data = findOurCardData(e.target);
+        if (!data) return;
+        try { e.stopImmediatePropagation(); } catch (ex) {}
+        try { e.preventDefault(); } catch (ex) {}
+        if (data.__last_watched_resume_placeholder) return;
+        var entry = data.__lwr_entry;
+        if (!entry) return;
+        log('long_press', 'card_id=' + entry.card_id);
+        showActionMenu(entry, data, e.target);
+    }
+
     function bindCaptureHandlers() {
         if (_captureBound) return;
         document.body.addEventListener('hover:enter', onCaptureEvent, true);
         document.body.addEventListener('click',       onCaptureEvent, true);
+        document.body.addEventListener('hover:long',  onCaptureLong,  true);
         _captureBound = true;
     }
 
@@ -935,6 +1018,307 @@
                 source:    card.source || 'tmdb'
             });
         } catch (e) { err('fallback', 'Activity.push fail', e && e.message); }
+    }
+
+    // ========================================================================
+    // Long-press action menu — our 2 items + Lampa's standard favorite items
+    // ========================================================================
+    //
+    // We can't set Card.onMenuShow per-instance because we don't construct
+    // the cards (ContentRows does). Instead we hijack `hover:long` in
+    // capture phase, replicate Lampa's standard action menu (mirrors the
+    // menu_favorite array in vendor/lampa-source/src/interaction/card.js:361)
+    // and prepend our two items.
+
+    function showActionMenu(entry, data, targetEl) {
+        var enabled = (Lampa.Controller.enabled && Lampa.Controller.enabled() || {}).name;
+        var status  = (Lampa.Favorite && Lampa.Favorite.check) ? Lampa.Favorite.check(data) : {};
+
+        var items = [
+            { title: tr('lwr_remove_from_list'), lwr_action: 'remove' },
+            { title: tr('lwr_move_in_list'),     lwr_action: 'move' },
+            { title: Lampa.Lang.translate('more'),          separator: true },
+            { title: Lampa.Lang.translate('title_book'),    where: 'book',    checkbox: true, checked: !!status.book },
+            { title: Lampa.Lang.translate('title_like'),    where: 'like',    checkbox: true, checked: !!status.like },
+            { title: Lampa.Lang.translate('title_wath'),    where: 'wath',    checkbox: true, checked: !!status.wath },
+            { title: Lampa.Lang.translate('menu_history'),  where: 'history', checkbox: true, checked: !!status.history }
+        ];
+
+        if (window.lampa_settings && window.lampa_settings.account_use) {
+            var marks = ['look', 'viewed', 'scheduled', 'continued', 'thrown'];
+            items.push({ title: Lampa.Lang.translate('settings_cub_status'), separator: true });
+            var i;
+            for (i = 0; i < marks.length; i++) {
+                var m = marks[i];
+                items.push({
+                    title:   Lampa.Lang.translate('title_' + m),
+                    where:   m,
+                    picked:  !!status[m],
+                    collect: true
+                });
+            }
+        }
+
+        Lampa.Select.show({
+            title: Lampa.Lang.translate('title_action'),
+            items: items,
+            onBack: function () {
+                if (enabled) try { Lampa.Controller.toggle(enabled); } catch (e) {}
+            },
+            onCheck: function (a) {
+                if (a.where && Lampa.Favorite && Lampa.Favorite.toggle) {
+                    Lampa.Favorite.toggle(a.where, data);
+                }
+            },
+            onSelect: function (a) {
+                if (a.lwr_action === 'remove') {
+                    if (enabled) try { Lampa.Controller.toggle(enabled); } catch (e) {}
+                    handleRemove(entry, data, targetEl);
+                    return;
+                }
+                if (a.lwr_action === 'move') {
+                    MoveMode.enter(entry, data, targetEl, enabled);
+                    return;
+                }
+                if (a.collect && Lampa.Favorite && Lampa.Favorite.toggle) {
+                    Lampa.Favorite.toggle(a.where, data);
+                }
+                if (enabled) try { Lampa.Controller.toggle(enabled); } catch (e) {}
+            }
+        });
+    }
+
+    // ========================================================================
+    // Delete with undo toast
+    // ========================================================================
+
+    function handleRemove(entry, data, targetEl) {
+        var queue = Store.getQueue();
+        var idx = -1;
+        var i;
+        for (i = 0; i < queue.length; i++) {
+            if (queue[i] && queue[i].card_id === entry.card_id) { idx = i; break; }
+        }
+        if (idx === -1) {
+            log('remove', 'noop', 'card_id=' + entry.card_id, 'reason=not_in_queue');
+            return;
+        }
+        var removed = queue[idx];
+        queue.splice(idx, 1);
+        Store.setQueue(queue);
+        log('remove', 'card_id=' + removed.card_id, 'idx=' + idx, 'queue.length=' + queue.length);
+        refreshRow();
+        showUndoToast(removed, idx, data);
+    }
+
+    function showUndoToast(removedEntry, originalIdx, card) {
+        // Lampa.Noty is just a passive toast — no clickable button. To give
+        // the user a real undo affordance on a TV remote, we show a tiny
+        // Lampa.Select with one item ("Отменить удаление: <title>") and a
+        // 4-second auto-close timer. Pick within 4 s → restore. Let it close
+        // → removal stands.
+        var label = (card && (card.title || card.name)) || ('id ' + removedEntry.card_id);
+        var undone = false;
+
+        var undo = function () {
+            if (undone) return;
+            undone = true;
+            var q = Store.getQueue();
+            var insertAt = Math.min(originalIdx, q.length);
+            q.splice(insertAt, 0, removedEntry);
+            if (q.length > MAX_QUEUE) q = q.slice(0, MAX_QUEUE);
+            Store.setQueue(q);
+            log('remove:undo', 'card_id=' + removedEntry.card_id, 'restored_at=' + insertAt);
+            refreshRow();
+        };
+
+        try { if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(tr('lwr_removed_noty').replace('{title}', label)); }
+        catch (e) {}
+
+        var enabled = (Lampa.Controller.enabled && Lampa.Controller.enabled() || {}).name;
+        var autoClose;
+        try {
+            Lampa.Select.show({
+                title: tr('lwr_removed_noty').replace('{title}', label),
+                items: [{ title: tr('lwr_undo'), lwr_undo: true }],
+                onBack: function () {
+                    if (autoClose) clearTimeout(autoClose);
+                    if (enabled) try { Lampa.Controller.toggle(enabled); } catch (ex) {}
+                },
+                onSelect: function (a) {
+                    if (autoClose) clearTimeout(autoClose);
+                    if (a && a.lwr_undo) undo();
+                    if (enabled) try { Lampa.Controller.toggle(enabled); } catch (ex) {}
+                }
+            });
+            autoClose = setTimeout(function () {
+                try {
+                    if (Lampa.Select && typeof Lampa.Select.close === 'function') Lampa.Select.close();
+                } catch (ex) {}
+                if (enabled) try { Lampa.Controller.toggle(enabled); } catch (ex) {}
+            }, DELETE_UNDO_MS);
+        } catch (e) { warn('remove:undo', 'select fail', e && e.message); }
+    }
+
+    function refreshRow() {
+        try {
+            if (Lampa.Activity && Lampa.Activity.active) {
+                var act = Lampa.Activity.active();
+                if (act && act.component === 'main' && typeof act.toggle === 'function') {
+                    act.toggle();
+                }
+            }
+        } catch (e) {}
+    }
+
+    // ========================================================================
+    // Move-mode — left/right reorder via D-pad, OK or Back commits
+    // ========================================================================
+    //
+    // After "Переместить" is selected from the action menu, we install a
+    // private Controller named 'lwr_reorder' that owns input. Each left/right
+    // press swaps the card with its neighbour in BOTH the queue array and
+    // the live DOM, persists immediately to Storage so a crash doesn't lose
+    // progress, and re-focuses the moving card. OK/Back exit move mode
+    // without rolling back — every step is already committed.
+
+    var MoveMode = {
+        active:        false,
+        _entry:        null,
+        _cardEl:       null,
+        _rowEl:        null,
+        _prevController: null,
+
+        enter: function (entry, data, targetEl, prevController) {
+            ensureStyles();
+            if (MoveMode.active) MoveMode.exit('superseded');
+
+            // Resolve the actual card DOM node — targetEl may be a child.
+            var $card = $(targetEl).closest('.card');
+            if (!$card.length) {
+                $card = $(targetEl).closest('.selector');
+            }
+            if (!$card.length) {
+                warn('move:enter', 'no_card_el');
+                if (prevController) try { Lampa.Controller.toggle(prevController); } catch (e) {}
+                return;
+            }
+            var $row = $card.closest('.items-line, .items-cards, .scroll__body');
+            if (!$row.length) {
+                warn('move:enter', 'no_row_el');
+                if (prevController) try { Lampa.Controller.toggle(prevController); } catch (e) {}
+                return;
+            }
+
+            MoveMode.active          = true;
+            MoveMode._entry          = entry;
+            MoveMode._cardEl         = $card[0];
+            MoveMode._rowEl          = $row[0];
+            MoveMode._prevController = prevController || null;
+
+            $card.addClass(REORDER_CLASS);
+            log('move:enter', 'card_id=' + entry.card_id);
+
+            try {
+                Lampa.Controller.add('lwr_reorder', {
+                    invisible: true,
+                    toggle: function () {
+                        Lampa.Controller.collectionSet(MoveMode._rowEl);
+                        Lampa.Controller.collectionFocus(MoveMode._cardEl, MoveMode._rowEl);
+                    },
+                    update: function () {
+                        Lampa.Controller.collectionSet(MoveMode._rowEl);
+                    },
+                    left:  function () { MoveMode.shift(-1); },
+                    right: function () { MoveMode.shift(+1); },
+                    up:    function () { MoveMode.exit('up'); },
+                    down:  function () { MoveMode.exit('down'); },
+                    enter: function () { MoveMode.exit('enter'); },
+                    back:  function () { MoveMode.exit('back'); }
+                });
+                Lampa.Controller.toggle('lwr_reorder');
+            } catch (e) {
+                err('move:enter', 'Controller.toggle fail', e && e.message);
+                MoveMode.exit('controller_fail');
+            }
+        },
+
+        shift: function (delta) {
+            if (!MoveMode.active) return;
+            var queue = Store.getQueue();
+            var idx = -1;
+            var i;
+            for (i = 0; i < queue.length; i++) {
+                if (queue[i] && queue[i].card_id === MoveMode._entry.card_id) { idx = i; break; }
+            }
+            if (idx === -1) return;
+            var newIdx = idx + delta;
+            if (newIdx < 0 || newIdx >= queue.length) {
+                log('move:shift', 'edge', 'delta=' + delta, 'idx=' + idx);
+                return;
+            }
+            var tmp = queue[idx];
+            queue[idx] = queue[newIdx];
+            queue[newIdx] = tmp;
+            Store.setQueue(queue);
+            log('move:shift', 'delta=' + delta, 'from=' + idx, 'to=' + newIdx);
+
+            // Mirror the swap in the live DOM so the card visibly moves
+            // without a full row re-render (which would lose focus).
+            var $card    = $(MoveMode._cardEl);
+            var $sibling = delta < 0 ? $card.prev('.card') : $card.next('.card');
+            if ($sibling.length) {
+                if (delta < 0) $sibling.before($card);
+                else           $sibling.after($card);
+            }
+
+            try {
+                Lampa.Controller.collectionSet(MoveMode._rowEl);
+                Lampa.Controller.collectionFocus(MoveMode._cardEl, MoveMode._rowEl);
+            } catch (e) {}
+        },
+
+        exit: function (reason) {
+            if (!MoveMode.active) return;
+            log('move:exit', 'reason=' + reason);
+            try { $(MoveMode._cardEl).removeClass(REORDER_CLASS); } catch (e) {}
+            var prev = MoveMode._prevController;
+            MoveMode.active          = false;
+            MoveMode._entry          = null;
+            MoveMode._cardEl         = null;
+            MoveMode._rowEl          = null;
+            MoveMode._prevController = null;
+            try {
+                if (prev) Lampa.Controller.toggle(prev);
+                else if (Lampa.Controller && Lampa.Controller.toggle) Lampa.Controller.toggle('content');
+            } catch (e) {}
+        }
+    };
+
+    // ========================================================================
+    // CSS — visual treatment for cards in move-mode
+    // ========================================================================
+
+    function ensureStyles() {
+        if (_stylesInjected) return;
+        _stylesInjected = true;
+        try {
+            var css = '' +
+                '.' + REORDER_CLASS + '{' +
+                    'transform: scale(1.06) rotate(-1.5deg) !important;' +
+                    'box-shadow: 0 0 0 3px #f5c518, 0 12px 28px rgba(245, 197, 24, 0.45);' +
+                    'transition: transform 180ms ease, box-shadow 180ms ease;' +
+                    'z-index: 30;' +
+                    'position: relative;' +
+                '}' +
+                '.' + REORDER_CLASS + ' .card__view{' +
+                    'overflow: visible !important;' +
+                '}';
+            var style = document.createElement('style');
+            style.setAttribute('data-lwr', '1');
+            style.appendChild(document.createTextNode(css));
+            document.head.appendChild(style);
+        } catch (e) { warn('styles', 'inject fail', e && e.message); }
     }
 
     // ========================================================================
@@ -1057,23 +1441,108 @@
     // ========================================================================
 
     function dispatchTorrentResume(entry, card) {
-        if (!Lampa.Torrent || typeof Lampa.Torrent.open !== 'function') {
+        if (!Lampa.Torrent) {
             err('resume:torrent', 'fail', 'reason=api_missing');
             dispatchFallbackToFull(entry, card, 'torrent_api_missing');
             return;
         }
-        log('resume:dispatch', 'target=torrent',
-            'hash=' + (entry.source.torrent_hash || '').slice(0, 8),
+        var magnet = entry.source.magnet || '';
+        var hash   = entry.source.torrent_hash || '';
+        // Magnet path — call Torrent.start with a synthetic element so Lampa
+        // re-adds the torrent to TorrServer if missing. Falls back to the
+        // hash-only path if no magnet was recorded (legacy queue entries).
+        if (magnet && typeof Lampa.Torrent.start === 'function') {
+            log('resume:dispatch', 'target=torrent', 'mode=start',
+                'magnet=present',
+                'hash=' + hash.slice(0, 8),
+                'autoclick=true');
+            TorrentSafetyNet.arm(entry, card);
+            TorrentAutoclick.start(entry);
+            var element = {
+                MagnetUri: magnet,
+                Link:      magnet,
+                title:     card.title || card.name || '',
+                Title:     card.title || card.name || '',
+                poster:    card.img || card.poster_path || ''
+            };
+            try {
+                Lampa.Torrent.start(element, card);
+            } catch (e) {
+                err('resume:torrent', 'Torrent.start fail', e && e.message);
+                TorrentAutoclick.abort('start_fail');
+                TorrentSafetyNet.disarm();
+                dispatchFallbackToFull(entry, card, 'torrent_start_fail');
+            }
+            return;
+        }
+        if (typeof Lampa.Torrent.open !== 'function') {
+            err('resume:torrent', 'fail', 'reason=api_missing');
+            dispatchFallbackToFull(entry, card, 'torrent_api_missing');
+            return;
+        }
+        log('resume:dispatch', 'target=torrent', 'mode=open',
+            'magnet=absent',
+            'hash=' + hash.slice(0, 8),
             'autoclick=true');
+        TorrentSafetyNet.arm(entry, card);
         TorrentAutoclick.start(entry);
         try {
-            Lampa.Torrent.open(entry.source.torrent_hash, card);
+            Lampa.Torrent.open(hash, card);
         } catch (e) {
             err('resume:torrent', 'Torrent.open fail', e && e.message);
             TorrentAutoclick.abort('open_fail');
+            TorrentSafetyNet.disarm();
             dispatchFallbackToFull(entry, card, 'torrent_open_fail');
         }
     }
+
+    // Safety net for the torrent path. Lampa polls /torrents every 2 s for up
+    // to 90 s before giving up — too long, and the user is stuck on a spinner.
+    // We listen for request_error on /torrents and bail on the first 404, so
+    // the user goes back to the card screen instead of staring at a spinner.
+    var TorrentSafetyNet = {
+        _armed: false,
+        _entry: null,
+        _card:  null,
+
+        arm: function (entry, card) {
+            TorrentSafetyNet._armed = true;
+            TorrentSafetyNet._entry = entry;
+            TorrentSafetyNet._card  = card;
+        },
+
+        disarm: function () {
+            TorrentSafetyNet._armed = false;
+            TorrentSafetyNet._entry = null;
+            TorrentSafetyNet._card  = null;
+        },
+
+        onRequestError: function (e) {
+            if (!TorrentSafetyNet._armed) return;
+            if (!e || !e.params) return;
+            var url = (e.params.url || '') + '';
+            if (url.indexOf('/torrents') === -1) return;
+            var status = 0;
+            try {
+                if (e.error) {
+                    status = parseInt(e.error.status || e.error.code || 0, 10) || 0;
+                }
+            } catch (ex) {}
+            if (status !== 404) return;
+            log('safety_net:404', 'aborting torrent resume',
+                'card_id=' + (TorrentSafetyNet._entry && TorrentSafetyNet._entry.card_id));
+            var entry = TorrentSafetyNet._entry;
+            var card  = TorrentSafetyNet._card;
+            TorrentSafetyNet.disarm();
+            try { TorrentAutoclick.abort('torrserver_404'); } catch (ex) {}
+            try {
+                if (Lampa.Modal && typeof Lampa.Modal.close === 'function') {
+                    Lampa.Modal.close();
+                }
+            } catch (ex) {}
+            if (entry && card) dispatchFallbackToFull(entry, card, 'torrserver_404');
+        }
+    };
 
     var TorrentAutoclick = {
         _handler: null,
@@ -1185,6 +1654,11 @@
             }
             TorrentAutoclick._entry = null;
             if (_activeAutoclick === TorrentAutoclick) _activeAutoclick = null;
+            // Once the autoclick is done — hit or otherwise — the torrent
+            // resume flow has reached its natural end. Disarm the safety net
+            // so unrelated /torrents traffic later in the session can't
+            // trigger a fallback redirect.
+            TorrentSafetyNet.disarm();
         }
     };
 
@@ -1230,6 +1704,22 @@
                 lwr_cleared_noty: {
                     ru: 'Запомненное удалено',
                     en: 'Saved entries cleared'
+                },
+                lwr_remove_from_list: {
+                    ru: 'Удалить из списка',
+                    en: 'Remove from list'
+                },
+                lwr_move_in_list: {
+                    ru: 'Переместить',
+                    en: 'Move'
+                },
+                lwr_removed_noty: {
+                    ru: 'Удалено: {title}',
+                    en: 'Removed: {title}'
+                },
+                lwr_undo: {
+                    ru: 'Отменить',
+                    en: 'Undo'
                 }
             });
         } catch (e) { err('i18n', 'register fail', e && e.message); }
@@ -1288,7 +1778,7 @@
         try {
             Lampa.Manifest.plugins = {
                 type:        'video',
-                version:     '0.1.0',
+                version:     '0.2.0',
                 name:        'Last Watched Resume',
                 description: 'One-click resume — last 5 watched titles row on the main screen, online + torrent.'
             };
@@ -1307,6 +1797,7 @@
         registerManifest();
         registerSettings();
         registerRow();
+        ensureStyles();
 
         // Three-layer recording strategy:
         //
@@ -1337,6 +1828,9 @@
         catch (e) { err('init', "Listener.follow('activity') fail", e && e.message); }
         try { Lampa.Listener.follow('torrent_file', onTorrentFile); }
         catch (e) { err('init', "Listener.follow('torrent_file') fail", e && e.message); }
+        try { Lampa.Listener.follow('request_error', TorrentSafetyNet.onRequestError); }
+        catch (e) { err('init', "Listener.follow('request_error') fail", e && e.message); }
+        patchTorrentStart();
         patchTorrentOpen();
         patchPlayerPlay();
 
