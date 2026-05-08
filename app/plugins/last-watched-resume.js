@@ -1563,16 +1563,19 @@
     // We listen for request_error on /torrents and bail on the first 404, so
     // the user goes back to the card screen instead of staring at a spinner.
     var TorrentSafetyNet = {
-        _armed: false,
-        _entry: null,
-        _card:  null,
-        _timer: null,
+        _armed:           false,
+        _entry:           null,
+        _card:            null,
+        _timer:           null,
+        _consecutive404s: 0,
+        _threshold:       2,  // bail after N consecutive 404s on /torrents
 
         arm: function (entry, card) {
             if (TorrentSafetyNet._timer) clearTimeout(TorrentSafetyNet._timer);
-            TorrentSafetyNet._armed = true;
-            TorrentSafetyNet._entry = entry;
-            TorrentSafetyNet._card  = card;
+            TorrentSafetyNet._armed           = true;
+            TorrentSafetyNet._entry           = entry;
+            TorrentSafetyNet._card            = card;
+            TorrentSafetyNet._consecutive404s = 0;
             // Hard upper bound — if no /torrents traffic happens at all
             // (e.g. TorrServer URL unreachable at the network layer), give
             // up watching after 30s so we don't strand the user later.
@@ -1589,9 +1592,10 @@
                 clearTimeout(TorrentSafetyNet._timer);
                 TorrentSafetyNet._timer = null;
             }
-            TorrentSafetyNet._armed = false;
-            TorrentSafetyNet._entry = null;
-            TorrentSafetyNet._card  = null;
+            TorrentSafetyNet._armed           = false;
+            TorrentSafetyNet._entry           = null;
+            TorrentSafetyNet._card            = null;
+            TorrentSafetyNet._consecutive404s = 0;
         },
 
         onRequestError: function (e) {
@@ -1606,17 +1610,42 @@
                 }
             } catch (ex) {}
             if (status !== 404) return;
+            TorrentSafetyNet._consecutive404s++;
+            if (TorrentSafetyNet._consecutive404s < TorrentSafetyNet._threshold) {
+                // First 404 — could be transient during a fresh torrent
+                // add (TorrServer hasn't indexed the magnet yet). Wait
+                // one more cycle (~2s) before bailing.
+                log('safety_net:404',
+                    'consecutive=' + TorrentSafetyNet._consecutive404s,
+                    'threshold=' + TorrentSafetyNet._threshold,
+                    'waiting');
+                return;
+            }
             log('safety_net:404', 'aborting torrent resume',
+                'consecutive=' + TorrentSafetyNet._consecutive404s,
                 'card_id=' + (TorrentSafetyNet._entry && TorrentSafetyNet._entry.card_id));
             var entry = TorrentSafetyNet._entry;
             var card  = TorrentSafetyNet._card;
             TorrentSafetyNet.disarm();
             try { TorrentAutoclick.abort('torrserver_404'); } catch (ex) {}
-            try {
-                if (Lampa.Modal && typeof Lampa.Modal.close === 'function') {
-                    Lampa.Modal.close();
-                }
-            } catch (ex) {}
+            // CRITICAL: Lampa's torrent flow keeps a setInterval polling
+            // /torrents in the closure of interaction/torrent.js — closing
+            // just the Modal doesn't stop it. The interval reads SERVER.hash
+            // on each tick, and once the user opens another torrent the new
+            // hash gets polled by BOTH the old (orphaned) interval AND the
+            // new one. The orphaned interval re-renders the file picker on
+            // every successful response, blinking the UI and stealing focus
+            // to the last episode (Controller.collectionFocus on the last
+            // file with progress, vendor/lampa-source/src/interaction/torrent.js:568).
+            // The clean way to stop it is to trigger the loading modal's
+            // own onBack — that calls Lampa's internal `close()` which
+            // clearIntervals timers.files AND Torserver.clear() AND drops
+            // the orphan SERVER state.
+            try { Lampa.Controller.back(); } catch (ex) {
+                err('safety_net', 'Controller.back fail', ex && ex.message);
+                // Last-resort fallback: at least close the modal UI.
+                try { if (Lampa.Modal && Lampa.Modal.close) Lampa.Modal.close(); } catch (ex2) {}
+            }
             if (entry && card) dispatchFallbackToTorrents(entry, card, 'torrserver_404');
         }
     };
@@ -1858,7 +1887,7 @@
         try {
             Lampa.Manifest.plugins = {
                 type:        'video',
-                version:     '0.2.2',
+                version:     '0.2.3',
                 name:        'Last Watched Resume',
                 description: 'One-click resume — last 5 watched titles row on the main screen, online + torrent.'
             };
