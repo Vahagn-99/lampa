@@ -402,6 +402,18 @@
 
     function onActivity(e) {
         try {
+            // When the user lands back on the main screen, queue may have
+            // been mutated mid-session (post-watch) but the row DOM still
+            // shows the boot snapshot. Run a row-sync as a safety net for
+            // the case where Player.listener('destroy') didn't reach us
+            // (verified empirically on Tizen — native player can swallow
+            // the event when handing focus back).
+            var compTop = (e && typeof e.component === 'string') ? e.component
+                       : (e && e.object && typeof e.object.component === 'string') ? e.object.component
+                       : '';
+            if (compTop === 'main') scheduleRowSync('activity_main');
+        } catch (ex) {}
+        try {
             // Lampa fires activity events as {component, type, object} —
             // component is a string (top-level), object is the activity
             // descriptor with movie/card/url/etc. (Earlier we tried
@@ -979,11 +991,127 @@
             warn('click', 'intercepted=true', 'entry_missing=true', 'card_id=' + (data.id || '?'));
             return;
         }
+        // Always re-read from Storage at click time. The DOM-attached entry
+        // is a SNAPSHOT taken when the row was first rendered (boot). After
+        // a watch through the fallback path, Store.upsert wrote a fresher
+        // entry with the captured magnet — without this re-read the click
+        // would still go through the old (no-magnet) source and bounce
+        // back to the torrent-search redirect.
+        var fresh = findEntryByCardId(entry.card_id);
+        if (fresh) {
+            entry = fresh;
+            data.__lwr_entry = fresh;
+        }
         log('click', 'intercepted=true',
             'card_id=' + entry.card_id,
             'kind=' + entry.source.kind,
+            'magnet=' + (entry.source && entry.source.magnet ? 'present' : 'absent'),
             'S' + (entry.season || '-') + 'E' + (entry.episode || '-'));
         dispatchResume(entry, data);
+    }
+
+    function findEntryByCardId(card_id) {
+        var queue = Store.getQueue();
+        var i;
+        for (i = 0; i < queue.length; i++) {
+            if (queue[i] && queue[i].card_id === card_id) return queue[i];
+        }
+        return null;
+    }
+
+    // ========================================================================
+    // Row sync — reflect post-watch queue changes without app reload
+    // ========================================================================
+    //
+    // ContentRows.call() is invoked ONCE at boot — Lampa has no public API
+    // to re-run it in place. After a watch updates the queue (new magnet,
+    // queue reorder, eviction), the DOM cards still hold the snapshot from
+    // boot: stale __lwr_entry, original order. Without this sync, clicking
+    // the same card after a watch goes through the OLD (magnet-less) entry
+    // and falls back to torrent-search again — the loop the user reported.
+    //
+    // We can't reconstruct missing cards (Lampa.Card class isn't part of
+    // the public API in 3.1.x), but we CAN imperatively reorder existing
+    // ones, drop evicted ones, and refresh __lwr_entry on each — covers
+    // the dominant case (re-watch of an existing row card).
+
+    var _syncTimer = null;
+    function scheduleRowSync(reason) {
+        if (_syncTimer) return;
+        _syncTimer = setTimeout(function () {
+            _syncTimer = null;
+            log('row:sync', 'trigger=' + reason);
+            syncRowWithQueue();
+        }, 300);
+    }
+
+    function syncRowWithQueue() {
+        try {
+            var queue = Store.getQueue();
+            var queueIds = {};
+            var i;
+            for (i = 0; i < queue.length; i++) {
+                if (queue[i] && queue[i].card_id != null) queueIds[queue[i].card_id] = queue[i];
+            }
+
+            // Find every DOM card we own across the page. Using attribute
+            // probing (not a class lookup) because cards are clones built
+            // by Lampa's Card class — class names are shared with normal
+            // cards, the marker lives on .card_data.
+            var ourCards = [];
+            $('.card').each(function () {
+                if (this.card_data &&
+                    this.card_data.__last_watched_resume === true &&
+                    !this.card_data.__last_watched_resume_placeholder) {
+                    ourCards.push(this);
+                }
+            });
+            if (!ourCards.length) return;
+
+            var $row = $(ourCards[0]).parent();
+            var dropped = 0;
+
+            // 1) Drop cards no longer in queue (evicted by MAX_QUEUE cap or
+            //    explicit user deletion that happened between boot and now).
+            for (i = 0; i < ourCards.length; i++) {
+                var c = ourCards[i];
+                if (!queueIds[c.card_data.id]) {
+                    $(c).remove();
+                    dropped++;
+                }
+            }
+
+            // 2) Re-index remaining cards.
+            var byId = {};
+            $row.find('.card').each(function () {
+                if (this.card_data &&
+                    this.card_data.__last_watched_resume === true &&
+                    !this.card_data.__last_watched_resume_placeholder) {
+                    byId[this.card_data.id] = this;
+                }
+            });
+
+            // 3) Walk queue in order; .append() moves the matching DOM node
+            //    to the end of the row. After processing all queue entries,
+            //    the row order matches the queue order — most-recent first.
+            var moved = 0;
+            for (i = 0; i < queue.length; i++) {
+                var q = queue[i];
+                if (!q || q.card_id == null) continue;
+                var domCard = byId[q.card_id];
+                if (!domCard) continue;
+                $row.append(domCard);
+                domCard.card_data.__lwr_entry = q;
+                moved++;
+            }
+
+            try { Lampa.Controller.collectionSet($row[0]); } catch (e) {}
+
+            log('row:sync', 'done',
+                'queue.length=' + queue.length,
+                'reordered=' + moved,
+                'dropped=' + dropped);
+        } catch (e) { warn('row:sync', 'fail', e && e.message); }
     }
 
     function onCaptureLong(e) {
@@ -1907,7 +2035,7 @@
         try {
             Lampa.Manifest.plugins = {
                 type:        'video',
-                version:     '0.2.4',
+                version:     '0.2.5',
                 name:        'Last Watched Resume',
                 description: 'One-click resume — last 5 watched titles row on the main screen, online + torrent.'
             };
@@ -1950,6 +2078,8 @@
         catch (e) { err('init', "Player.listener.follow('start') fail", e && e.message); }
         try { Lampa.Player.listener.follow('external', function (d) { onPlayerStart(d, 'external'); }); }
         catch (e) { err('init', "Player.listener.follow('external') fail", e && e.message); }
+        try { Lampa.Player.listener.follow('destroy',  function () { scheduleRowSync('player_destroy'); }); }
+        catch (e) { err('init', "Player.listener.follow('destroy') fail", e && e.message); }
 
         try { Lampa.Listener.follow('state:changed', onStateChanged); }
         catch (e) { err('init', "Listener.follow('state:changed') fail", e && e.message); }
