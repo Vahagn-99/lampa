@@ -223,6 +223,22 @@
     }
 
     function onPlayerStart(data, evt) {
+        // Lampa's torrent flow calls Player.play(element) where `element`
+        // is the FILE descriptor (path, url, season, episode, torrent_hash,
+        // timeline) and does NOT carry a `card` field — Lampa pulls the
+        // card from Lampa.Activity.active().movie internally for its own
+        // footer rendering (vendor/lampa-source/src/interaction/player.js
+        // l. 962-966). We need to mirror that fallback or eligibleReason
+        // returns 'no_card' for every torrent play, leaving the queue
+        // entry without a magnet and forcing the user back through the
+        // fallback path on the next click — the exact symptom of "after
+        // watching, next click still redirects to torrent search".
+        if (data && !data.card) {
+            try {
+                var act = Lampa.Activity && Lampa.Activity.active && Lampa.Activity.active();
+                if (act && act.movie && act.movie.id != null) data.card = act.movie;
+            } catch (e) {}
+        }
         var reason = eligibleReason(data);
         if (reason) {
             log('player:start', 'evt=' + evt, 'skip', 'reason=' + reason);
@@ -532,7 +548,11 @@
             _origPlayerPlay = Lampa.Player.play;
             Lampa.Player.play = function (data) {
                 try {
-                    if (data && data.card && data.card.id != null && !data.iptv && !data.trailer) {
+                    // Don't gate on data.card here — Lampa's torrent flow
+                    // omits it (it's pulled from Activity.active().movie
+                    // internally). onPlayerStart's own fallback resolves
+                    // the card; gating up-front would short-circuit it.
+                    if (data && !data.iptv && !data.trailer) {
                         onPlayerStart(data, 'patch-play');
                     }
                 } catch (ex) {}
@@ -1887,7 +1907,7 @@
         try {
             Lampa.Manifest.plugins = {
                 type:        'video',
-                version:     '0.2.3',
+                version:     '0.2.4',
                 name:        'Last Watched Resume',
                 description: 'One-click resume — last 5 watched titles row on the main screen, online + torrent.'
             };
