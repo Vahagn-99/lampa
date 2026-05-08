@@ -1107,11 +1107,34 @@
         queue.splice(idx, 1);
         Store.setQueue(queue);
         log('remove', 'card_id=' + removed.card_id, 'idx=' + idx, 'queue.length=' + queue.length);
-        refreshRow();
-        showUndoToast(removed, idx, data);
+
+        // Detach the card DOM node directly. Lampa.Activity.toggle() does
+        // NOT re-execute ContentRows.call() in 3.1.x, so a row can't be
+        // re-rendered without leaving and re-entering the screen. Detaching
+        // by ourselves both: (a) gives instant visual feedback, and (b)
+        // preserves the bound jQuery handlers so we can re-attach the same
+        // node verbatim if undo fires.
+        var $card = $(targetEl).closest('.card');
+        if (!$card.length) $card = $(targetEl).closest('.selector');
+        var $row     = $card.length ? $card.parent() : null;
+        var $prev    = $card.length ? $card.prev()  : null;
+        var detached = ($card.length && $row && $row.length) ? $card.detach() : null;
+        if (detached) {
+            // Reset focus to nearest sibling so D-pad doesn't strand on a
+            // ghost element. Prefer next neighbour, fall back to previous.
+            try {
+                var $focusTarget = ($prev && $prev.length) ? $prev : ($row.children('.card').first());
+                if ($focusTarget && $focusTarget.length) {
+                    Lampa.Controller.collectionSet($row[0]);
+                    Lampa.Controller.collectionFocus($focusTarget[0], $row[0]);
+                }
+            } catch (e) {}
+        }
+
+        showUndoToast(removed, idx, data, detached, $prev, $row);
     }
 
-    function showUndoToast(removedEntry, originalIdx, card) {
+    function showUndoToast(removedEntry, originalIdx, card, detached, $prev, $row) {
         // Lampa.Noty is just a passive toast — no clickable button. To give
         // the user a real undo affordance on a TV remote, we show a tiny
         // Lampa.Select with one item ("Отменить удаление: <title>") and a
@@ -1129,7 +1152,20 @@
             if (q.length > MAX_QUEUE) q = q.slice(0, MAX_QUEUE);
             Store.setQueue(q);
             log('remove:undo', 'card_id=' + removedEntry.card_id, 'restored_at=' + insertAt);
-            refreshRow();
+            // Re-attach the original DOM node — keeps focus state and any
+            // Lampa-side handlers (cards bind their own hover/focus during
+            // construction; recreating from scratch loses them).
+            if (detached && $row && $row.length) {
+                try {
+                    if ($prev && $prev.length && $.contains($row[0], $prev[0])) {
+                        $prev.after(detached);
+                    } else {
+                        $row.prepend(detached);
+                    }
+                    Lampa.Controller.collectionSet($row[0]);
+                    Lampa.Controller.collectionFocus(detached[0], $row[0]);
+                } catch (e) { warn('remove:undo', 'reattach fail', e && e.message); }
+            }
         };
 
         try { if (Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(tr('lwr_removed_noty').replace('{title}', label)); }
@@ -1158,17 +1194,6 @@
                 if (enabled) try { Lampa.Controller.toggle(enabled); } catch (ex) {}
             }, DELETE_UNDO_MS);
         } catch (e) { warn('remove:undo', 'select fail', e && e.message); }
-    }
-
-    function refreshRow() {
-        try {
-            if (Lampa.Activity && Lampa.Activity.active) {
-                var act = Lampa.Activity.active();
-                if (act && act.component === 'main' && typeof act.toggle === 'function') {
-                    act.toggle();
-                }
-            }
-        } catch (e) {}
     }
 
     // ========================================================================
@@ -1504,14 +1529,29 @@
         _armed: false,
         _entry: null,
         _card:  null,
+        _timer: null,
 
         arm: function (entry, card) {
+            if (TorrentSafetyNet._timer) clearTimeout(TorrentSafetyNet._timer);
             TorrentSafetyNet._armed = true;
             TorrentSafetyNet._entry = entry;
             TorrentSafetyNet._card  = card;
+            // Hard upper bound — if no /torrents traffic happens at all
+            // (e.g. TorrServer URL unreachable at the network layer), give
+            // up watching after 30s so we don't strand the user later.
+            TorrentSafetyNet._timer = setTimeout(function () {
+                if (TorrentSafetyNet._armed) {
+                    log('safety_net:expired', 'no_traffic_in_30s');
+                    TorrentSafetyNet.disarm();
+                }
+            }, 30000);
         },
 
         disarm: function () {
+            if (TorrentSafetyNet._timer) {
+                clearTimeout(TorrentSafetyNet._timer);
+                TorrentSafetyNet._timer = null;
+            }
             TorrentSafetyNet._armed = false;
             TorrentSafetyNet._entry = null;
             TorrentSafetyNet._card  = null;
@@ -1654,11 +1694,14 @@
             }
             TorrentAutoclick._entry = null;
             if (_activeAutoclick === TorrentAutoclick) _activeAutoclick = null;
-            // Once the autoclick is done — hit or otherwise — the torrent
-            // resume flow has reached its natural end. Disarm the safety net
-            // so unrelated /torrents traffic later in the session can't
-            // trigger a fallback redirect.
-            TorrentSafetyNet.disarm();
+            // Disarm the safety net only when the autoclick reached a
+            // terminal state. 'restart' and 'superseded' are mid-lifecycle
+            // resets driven by start() or by another dispatch — disarming
+            // here would race with the new arm() that's about to follow.
+            if (reason === 'hit' || reason === 'no_match' ||
+                reason === 'dom_not_found' || reason === 'timeout') {
+                TorrentSafetyNet.disarm();
+            }
         }
     };
 
@@ -1778,7 +1821,7 @@
         try {
             Lampa.Manifest.plugins = {
                 type:        'video',
-                version:     '0.2.0',
+                version:     '0.2.1',
                 name:        'Last Watched Resume',
                 description: 'One-click resume — last 5 watched titles row on the main screen, online + torrent.'
             };
