@@ -1213,13 +1213,24 @@
     // the cards (ContentRows does). Instead we hijack `hover:long` in
     // capture phase, replicate Lampa's standard action menu (mirrors the
     // menu_favorite array in vendor/lampa-source/src/interaction/card.js:361)
-    // and prepend our two items.
+    // and prepend our three items.
+
+    // Deliberate "open card" navigation from the long-press menu. Reuses the
+    // full-screen push the torrent/online fallbacks already share, but logs it
+    // as an explicit user action rather than a resume fallback. Activity.push
+    // installs the 'full' screen's own controller, so — unlike the remove
+    // branch — the caller must NOT toggle the previous controller back.
+    function openCardScreen(entry, data) {
+        log('action:open_card', 'card_id=' + entry.card_id);
+        dispatchFallbackToFull(entry, data, 'menu_open_card');
+    }
 
     function showActionMenu(entry, data, targetEl) {
         var enabled = (Lampa.Controller.enabled && Lampa.Controller.enabled() || {}).name;
         var status  = (Lampa.Favorite && Lampa.Favorite.check) ? Lampa.Favorite.check(data) : {};
 
         var items = [
+            { title: tr('lwr_open_card'),        lwr_action: 'card' },
             { title: tr('lwr_remove_from_list'), lwr_action: 'remove' },
             { title: tr('lwr_move_in_list'),     lwr_action: 'move' },
             { title: Lampa.Lang.translate('more'),          separator: true },
@@ -1256,6 +1267,10 @@
                 }
             },
             onSelect: function (a) {
+                if (a.lwr_action === 'card') {
+                    openCardScreen(entry, data);
+                    return;
+                }
                 if (a.lwr_action === 'remove') {
                     if (enabled) try { Lampa.Controller.toggle(enabled); } catch (e) {}
                     handleRemove(entry, data, targetEl);
@@ -1962,6 +1977,10 @@
                     ru: 'Запомненное удалено',
                     en: 'Saved entries cleared'
                 },
+                lwr_open_card: {
+                    ru: 'Перейти в карточку',
+                    en: 'Open card'
+                },
                 lwr_remove_from_list: {
                     ru: 'Удалить из списка',
                     en: 'Remove from list'
@@ -2035,7 +2054,7 @@
         try {
             Lampa.Manifest.plugins = {
                 type:        'video',
-                version:     '0.2.5',
+                version:     '0.2.6',
                 name:        'Last Watched Resume',
                 description: 'One-click resume — last 5 watched titles row on the main screen, online + torrent.'
             };
