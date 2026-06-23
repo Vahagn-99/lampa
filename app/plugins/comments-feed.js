@@ -255,25 +255,30 @@
     // -------------------------------------------------------------------- Feed
     var Feed = (function () {
         var $root = null;
+        var scrollPos = 0;
 
         var CSS =
-            '.comments-feed{position:absolute;left:0;right:0;bottom:0;height:70%;z-index:60;' +
-            'background:linear-gradient(180deg,rgba(8,11,20,0) 0%,rgba(8,11,20,.92) 18%,#080b14 40%);' +
-            'transform:translateY(100%);transition:transform .3s ease;padding:2em 3em 1em;box-sizing:border-box;' +
-            'overflow:hidden;display:flex;flex-direction:column;}' +
+            '.comments-feed{position:absolute;left:0;right:0;bottom:0;height:74%;z-index:60;' +
+            'background:linear-gradient(180deg,rgba(0,0,0,0) 0%,rgba(0,0,0,.82) 12%,rgba(0,0,0,.94) 32%);' +
+            'transform:translateY(100%);transition:transform .3s ease;' +
+            'padding:2.6em 3.4em 1.4em;box-sizing:border-box;display:flex;flex-direction:column;' +
+            'font-family:inherit;}' +
             '.comments-feed.is-visible{transform:translateY(0);}' +
-            '.comments-feed__head{color:#fff;font-size:1.4em;font-weight:600;margin-bottom:.7em;flex:none;}' +
-            '.comments-feed__list{overflow:hidden;flex:1 1 auto;}' +
-            '.comments-feed__item{display:flex;gap:.8em;padding:.7em;border-radius:.6em;margin-bottom:.4em;}' +
-            '.comments-feed__item.focus{background:rgba(255,255,255,.12);}' +
-            '.comments-feed__ava{width:2.4em;height:2.4em;border-radius:50%;background:#2b3852;flex:none;' +
-            'background-size:cover;background-position:center;}' +
-            '.comments-feed__body{flex:1 1 auto;color:#cdd6e3;}' +
-            '.comments-feed__name{color:#7da2d8;font-weight:600;font-size:.95em;}' +
-            '.comments-feed__date{color:#6b7686;font-size:.8em;margin-left:.6em;}' +
-            '.comments-feed__text{margin-top:.25em;font-size:.95em;line-height:1.4;}' +
-            '.comments-feed__reply{margin-top:.5em;padding-left:1em;border-left:2px solid #2a3550;}' +
-            '.comments-feed__more{color:#8b96a6;text-align:center;padding:.8em;flex:none;}';
+            '.comments-feed__head{color:#fff;font-size:1.5em;font-weight:600;margin-bottom:1em;flex:none;}' +
+            '.comments-feed__head b{color:rgba(255,255,255,.45);font-weight:400;font-size:.7em;margin-left:.6em;}' +
+            '.comments-feed__list{position:relative;overflow:hidden;flex:1 1 auto;}' +
+            '.comments-feed__track{position:absolute;left:0;right:0;top:0;transition:transform .2s ease;}' +
+            '.comments-feed__item{display:flex;gap:1em;padding:.95em 0;border-bottom:1px solid rgba(255,255,255,.08);}' +
+            '.comments-feed__ava{width:2.7em;height:2.7em;border-radius:50%;background:rgba(255,255,255,.12);' +
+            'flex:none;background-size:cover;background-position:center;}' +
+            '.comments-feed__body{flex:1 1 auto;min-width:0;}' +
+            '.comments-feed__name{color:#fff;font-weight:600;font-size:1em;}' +
+            '.comments-feed__date{color:rgba(255,255,255,.4);font-size:.8em;margin-left:.7em;font-weight:400;}' +
+            '.comments-feed__text{margin-top:.35em;font-size:1em;line-height:1.45;color:rgba(255,255,255,.82);' +
+            'word-wrap:break-word;}' +
+            '.comments-feed__reply{margin-top:.7em;padding:0 0 0 1.1em;border-bottom:none;' +
+            'border-left:2px solid rgba(255,255,255,.14);}' +
+            '.comments-feed__more{color:rgba(255,255,255,.5);text-align:center;padding:1em;flex:none;}';
 
         function injectStyles() {
             if (document.getElementById('comments-feed-style')) return;
@@ -284,7 +289,7 @@
         }
 
         function commentNode(c, isReply) {
-            var $n = $('<div class="comments-feed__item' + (isReply ? ' comments-feed__reply' : '') + ' selector"></div>');
+            var $n = $('<div class="comments-feed__item' + (isReply ? ' comments-feed__reply' : '') + '"></div>');
             var $ava = $('<div class="comments-feed__ava"></div>');
             if (c.avatar) $ava.css('background-image', 'url(' + c.avatar + ')');
             var $body = $('<div class="comments-feed__body"></div>');
@@ -297,8 +302,9 @@
 
         function build() {
             injectStyles();
+            scrollPos = 0;
             $root = $('<div class="comments-feed"><div class="comments-feed__head">Комментарии</div>' +
-                      '<div class="comments-feed__list"></div>' +
+                      '<div class="comments-feed__list"><div class="comments-feed__track"></div></div>' +
                       '<div class="comments-feed__more"></div></div>');
             $('.player').append($root);
             return $root;
@@ -306,15 +312,43 @@
 
         function appendComments(list) {
             if (!$root) return;
-            var $list = $root.find('.comments-feed__list');
+            var $track = $root.find('.comments-feed__track');
             for (var i = 0; i < list.length; i++) {
                 var c = list[i];
-                $list.append(commentNode(c, false));
+                $track.append(commentNode(c, false));
                 if (c.replies && c.replies.length) {
-                    for (var j = 0; j < c.replies.length; j++) $list.append(commentNode(c.replies[j], true));
+                    for (var j = 0; j < c.replies.length; j++) $track.append(commentNode(c.replies[j], true));
                 }
             }
         }
+
+        function maxScroll() {
+            if (!$root) return 0;
+            var list  = $root.find('.comments-feed__list').get(0);
+            var track = $root.find('.comments-feed__track').get(0);
+            if (!list || !track) return 0;
+            return Math.max(0, track.offsetHeight - list.clientHeight);
+        }
+
+        function step() {
+            if (!$root) return 120;
+            var list = $root.find('.comments-feed__list').get(0);
+            return Math.max(90, (list ? list.clientHeight : 300) * 0.5);
+        }
+
+        function apply() {
+            if ($root) $root.find('.comments-feed__track').css('transform', 'translateY(' + (-scrollPos) + 'px)');
+        }
+
+        // dir: -1 вверх, +1 вниз. Возвращает {atTop, atBottom}.
+        function scroll(dir) {
+            var max = maxScroll();
+            scrollPos = Math.min(max, Math.max(0, scrollPos + dir * step()));
+            apply();
+            return { atTop: scrollPos <= 0, atBottom: scrollPos >= max - 1, max: max };
+        }
+
+        function atTop() { return scrollPos <= 0; }
 
         function setLoading(on) {
             if ($root) $root.find('.comments-feed__more').text(on ? 'Загрузка…' : '');
@@ -326,6 +360,7 @@
 
         function clear() {
             if ($root) { $root.remove(); $root = null; }
+            scrollPos = 0;
             var s = document.getElementById('comments-feed-style');
             if (s && s.parentNode) s.parentNode.removeChild(s);
         }
@@ -333,8 +368,8 @@
         function root() { return $root; }
 
         return {
-            build: build, appendComments: appendComments, setLoading: setLoading,
-            message: message, clear: clear, root: root
+            build: build, appendComments: appendComments, scroll: scroll, atTop: atTop,
+            setLoading: setLoading, message: message, clear: clear, root: root
         };
     })();
 
@@ -373,29 +408,13 @@
     function boot() {
         registerSettings();
 
-        var S = { card: null, ref: null, page: 0, loading: false, hasMore: true, focus: 0, open: false };
+        var S = { card: null, ref: null, page: 0, loading: false, hasMore: true, loaded: [], open: false };
 
         function prepare(card) {
-            S.card = card; S.ref = null; S.page = 0; S.hasMore = true; S.focus = 0;
+            S.card = card; S.ref = null; S.page = 0; S.hasMore = true; S.loaded = [];
             var src = CommentSources.active();
             if (!src || !card) return;
             src.find(card, function (ref) { S.ref = ref; log('prepared ref', ref); });
-        }
-
-        function items() {
-            var r = Feed.root();
-            return r ? r.find('.comments-feed__item') : $();
-        }
-
-        function setFocus(idx) {
-            var $it = items();
-            if (!$it.length) return;
-            idx = Math.max(0, Math.min(idx, $it.length - 1));
-            S.focus = idx;
-            $it.removeClass('focus');
-            var el = $it.eq(idx).addClass('focus').get(0);
-            if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
-            if (idx >= $it.length - 3) loadMore();
         }
 
         function loadMore() {
@@ -407,24 +426,38 @@
                 S.loading = false; Feed.setLoading(false);
                 S.page += 1;
                 S.hasMore = res.hasMore;
-                if (res.list.length) Feed.appendComments(res.list);
-                if (!items().length && !S.hasMore) Feed.message('Комментариев нет');
+                if (res.list.length) {
+                    for (var i = 0; i < res.list.length; i++) S.loaded.push(res.list[i]);
+                    if (S.open) Feed.appendComments(res.list);
+                }
+                if (!S.loaded.length && !S.hasMore) Feed.message('Комментариев нет');
             });
         }
 
         function openFeed() {
             if (S.open || !isEnabled() || !$('.player').length) return;
             if (!S.ref) { try { Lampa.Noty.show('Комментарии не найдены'); } catch (e) {} return; }
-            S.open = true; S.focus = 0;
+            S.open = true;
             Feed.build();
+            // Перерисовываем уже загруженное (фикс пустого блока при повторном открытии);
+            // если ещё ничего нет — тянем первую страницу.
+            if (S.loaded.length) Feed.appendComments(S.loaded);
+            else loadMore();
+
             Lampa.Controller.add('comments_feed', {
                 invisible: true,
-                toggle: function () { setFocus(S.focus); },
-                up: function () { if (S.focus <= 0) closeFeed(); else setFocus(S.focus - 1); },
-                down: function () { setFocus(S.focus + 1); },
+                toggle: function () {},
+                up: function () {
+                    if (Feed.atTop()) closeFeed();
+                    else Feed.scroll(-1);
+                },
+                down: function () {
+                    var st = Feed.scroll(1);
+                    if (st.atBottom) loadMore();
+                },
                 back: closeFeed
             });
-            loadMore();
+
             setTimeout(function () {
                 var r = Feed.root();
                 if (r) r.addClass('is-visible');
