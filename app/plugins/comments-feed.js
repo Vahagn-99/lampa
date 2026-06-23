@@ -107,9 +107,8 @@
         }
 
         function active() {
-            // TODO: вернуть дефолт 'rezka' после визуального теста
-            var id = Lampa.Storage.get(KEY.source, 'mock') || 'mock';
-            return map[id] || map.mock || map.rezka || null;
+            var id = Lampa.Storage.get(KEY.source, 'rezka') || 'rezka';
+            return map[id] || map.rezka || null;
         }
 
         function list() {
@@ -393,7 +392,7 @@
 
         Lampa.SettingsApi.addParam({
             component: 'comments_feed',
-            param: { name: KEY.source, type: 'select', values: values, default: 'mock' },
+            param: { name: KEY.source, type: 'select', values: values, default: 'rezka' },
             field: { name: 'Источник', description: 'Откуда тянуть комментарии' }
         });
 
