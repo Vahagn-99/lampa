@@ -25,11 +25,22 @@
     // Пусто = прямой запрос. Можно вписать свой прокси-префикс (с / на конце).
     var DEFAULTS = { proxy: '' };
 
+    // Временная видимая отладка через тосты (когда логи не доходят). TODO: убрать.
+    var DEBUG = true;
+
     function log() {
         try {
             var args = Array.prototype.slice.call(arguments);
             args.unshift(LOG);
             console.log.apply(console, args);
+        } catch (e) {}
+    }
+
+    function dbg() {
+        if (!DEBUG) return;
+        try {
+            var a = Array.prototype.slice.call(arguments);
+            Lampa.Noty.show('CF: ' + a.join(' '));
         } catch (e) {}
     }
 
@@ -141,20 +152,25 @@
             var year = this._year(card);
             var q = encodeURIComponent(name) + (year ? '+' + year : '');
             var url = 'https://hdrezka.ag/search/?do=search&subaction=search&q=' + q;
+            dbg('search', name, year);
 
             Transport.get(url, function (html) {
                 var newsId = null;
+                var items = 0;
                 try {
                     var $items = $('<div></div>').append($.parseHTML(html || '')).find('.b-content__inline_item');
+                    items = $items.length;
                     if ($items.length) {
                         var raw = $items.first().attr('data-id');
                         if (raw) newsId = String(raw).replace(/[^0-9]/g, '') || null;
                     }
                 } catch (e) { log('find parse error', e); }
                 log('find', name, year, '->', newsId);
+                dbg('find resp len=' + (html || '').length, 'items=' + items, '-> id=' + (newsId || 'NULL'));
                 cb(newsId);
             }, function (status) {
                 log('find request failed', status);
+                dbg('find FAIL http=' + status);
                 cb(null);
             }, { dataType: 'text' });
         },
@@ -204,15 +220,21 @@
                       '&cstart=' + (page || 1) + '&type=0&comment_id=0&skin=hdrezka';
             Transport.get(url, function (raw) {
                 var html = '';
+                var jsonOk = false;
                 try {
                     var json = typeof raw === 'string' ? JSON.parse(raw) : raw;
                     html = (json && json.comments) || '';
+                    jsonOk = true;
                 } catch (e) { log('comments json error', e); }
                 var list = RezkaSource._parse(html);
                 log('comments page', page, '->', list.length);
+                dbg('comments raw=' + (raw ? String(raw).length : 0),
+                    'json=' + (jsonOk ? 'ok' : 'FAIL'),
+                    'html=' + html.length, 'parsed=' + list.length);
                 cb({ list: list, hasMore: list.length > 0 });
             }, function (status) {
                 log('comments request failed', status);
+                dbg('comments FAIL http=' + status);
                 cb({ list: [], hasMore: false });
             }, { dataType: 'text' });
         }
