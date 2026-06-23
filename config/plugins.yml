@@ -69,6 +69,15 @@ plugins:
     category: mine
     version: "0.1.0"
 
+  playlists:
+    file: playlists.js
+    aliases: [playlists, playlist, плейлисты, collections-user]
+    display_name: Плейлисты
+    description: Свои именованные плейлисты — добавляйте фильмы и сериалы из меню карточки по долгому «ОК»; просмотр, переименование, перемещение и удаление категорий в боковом меню
+    author: "@vahagn_99"
+    category: mine
+    version: "0.1.0"
+
   torrserver-discovery:
     file: torrserver-discovery.js
     aliases: [tsd, torrserver]

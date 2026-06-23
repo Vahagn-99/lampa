@@ -22,6 +22,14 @@
           "version": "0.1.0"
         },
         {
+          "name": "Плейлисты",
+          "descr": "Свои именованные плейлисты — добавляйте фильмы и сериалы из меню карточки по долгому «ОК»; просмотр, переименование, перемещение и удаление категорий в боковом меню",
+          "link": "https://vahagn-99.github.io/lampa/app/plugins/playlists.js",
+          "author": "@vahagn_99",
+          "available_lampa": 1,
+          "version": "0.1.0"
+        },
+        {
           "name": "Мой магазин плагинов",
           "descr": "Открывает мой магазин плагинов из настроек Lampa",
           "link": "https://vahagn-99.github.io/lampa/app/store.js",
